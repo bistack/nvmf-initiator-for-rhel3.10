@@ -28,9 +28,8 @@
 #include <linux/once.h>
 #endif
 #include <linux/pci.h>
-#include <linux/nvme-peer.h>
-#include <linux/t10-pi.h>
-#include <linux/types.h>
+//#include <linux/t10-pi.h>
+
 #ifdef HAVE_IO_64_NONATOMIC_LO_HI_H
 #include <linux/io-64-nonatomic-lo-hi.h>
 #else
@@ -75,17 +74,6 @@ static const struct kernel_param_ops io_queue_depth_ops = {
 static int io_queue_depth = 1024;
 module_param_cb(io_queue_depth, &io_queue_depth_ops, &io_queue_depth, 0644);
 MODULE_PARM_DESC(io_queue_depth, "set io queue depth, should >= 2");
-
-static int num_p2p_queues_set(const char *val, const struct kernel_param *kp);
-static const struct kernel_param_ops num_p2p_queues_ops = {
-	.set = num_p2p_queues_set,
-	.get = param_get_int,
-};
-
-static unsigned int num_p2p_queues = 0;
-module_param_cb(num_p2p_queues, &num_p2p_queues_ops, &num_p2p_queues, S_IRUGO);
-MODULE_PARM_DESC(num_p2p_queues,
-		 "number of I/O queues to create for peer-to-peer data transfer per pci function (Default: 0)");
 
 struct nvme_dev;
 struct nvme_queue;
@@ -133,7 +121,6 @@ struct nvme_dev {
 	u32 cmbloc;
 	struct nvme_ctrl ctrl;
 	struct completion ioq_wait;
-	unsigned num_p2p_queues;
 
 	/* shadow doorbell buffer support: */
 	u32 *dbbuf_dbs;
@@ -158,18 +145,6 @@ static int io_queue_depth_set(const char *val, const struct kernel_param *kp)
 		return -EINVAL;
 
 	return param_set_int(val, kp);
-}
-
-static int num_p2p_queues_set(const char *val, const struct kernel_param *kp)
-{
-	unsigned n = 0;
-	int ret;
-
-	ret = kstrtouint(val, 0, &n);
-	if (ret != 0 || n > 65534)
-		return -EINVAL;
-
-	return param_set_uint(val, kp);
 }
 
 static inline unsigned int sq_idx(unsigned int qid, u32 stride)
@@ -217,10 +192,6 @@ struct nvme_queue {
 	u32 *dbbuf_cq_db;
 	u32 *dbbuf_sq_ei;
 	u32 *dbbuf_cq_ei;
-
-	/* p2p */
-	bool p2p;
-	struct nvme_peer_resource resource;
 };
 
 /*
@@ -242,109 +213,6 @@ struct nvme_iod {
 	struct scatterlist *sg;
 	struct scatterlist inline_sg[0];
 };
-
-static int nvme_peer_init_resource(struct nvme_queue *nvmeq,
-				   enum nvme_peer_resource_mask mask,
-				   void (* stop_master_peer)(void *priv), void *dd_data)
-{
-	struct nvme_dev *dev = nvmeq->dev;
-	struct pci_dev *pdev = to_pci_dev(dev->dev);
-	int qid = nvmeq->qid;
-	int ret = 0;
-
-	if (mask & NVME_PEER_SQT_DBR)
-		/* Calculation from NVMe 1.2.1 SPEC */
-#ifndef CONFIG_PPC
-		nvmeq->resource.sqt_dbr_addr = pci_bus_address(pdev, 0) + (0x1000 + ((2 * (qid)) * (4 << NVME_CAP_STRIDE(dev->ctrl.cap))));
-#else
-		nvmeq->resource.sqt_dbr_addr = 0x800000000000000 | (pci_resource_start(pdev, 0) + (0x1000 + ((2 * (qid)) * (4 << NVME_CAP_STRIDE(dev->ctrl.cap)))));
-#endif
-
-	if (mask & NVME_PEER_CQH_DBR)
-		/* Calculation from NVMe 1.2.1 SPEC */
-#ifndef CONFIG_PPC
-		nvmeq->resource.cqh_dbr_addr = pci_bus_address(pdev, 0) + (0x1000 + ((2 * (qid) + 1) * (4 << NVME_CAP_STRIDE(dev->ctrl.cap))));
-#else
-		nvmeq->resource.cqh_dbr_addr = 0x800000000000000 | (pci_resource_start(pdev, 0) + (0x1000 + ((2 * (qid) + 1) * (4 << NVME_CAP_STRIDE(dev->ctrl.cap)))));
-#endif
-
-	if (mask & NVME_PEER_SQ_PAS)
-		nvmeq->resource.sq_dma_addr = nvmeq->sq_dma_addr;
-
-	if (mask & NVME_PEER_CQ_PAS)
-		nvmeq->resource.cq_dma_addr = nvmeq->cq_dma_addr;
-
-	if (mask & NVME_PEER_SQ_SZ)
-		nvmeq->resource.nvme_sq_size = SQ_SIZE(dev->q_depth);
-
-	if (mask & NVME_PEER_CQ_SZ)
-		nvmeq->resource.nvme_cq_size = CQ_SIZE(dev->q_depth);
-
-	if (mask & NVME_PEER_MEM_LOG_PG_SZ)
-		nvmeq->resource.memory_log_page_size = __ffs(dev->ctrl.page_size >> 12); /* memory_log_page_size is in 4K granularity */
-
-	nvmeq->resource.flags = NVME_QUEUE_PHYS_CONTIG;
-	nvmeq->resource.stop_master_peer = stop_master_peer;
-	nvmeq->resource.dd_data = dd_data;
-
-	return ret;
-}
-
-void nvme_peer_put_resource(struct nvme_peer_resource *resource, bool restart)
-{
-	struct nvme_queue *nvmeq = container_of(resource, struct nvme_queue,
-						resource);
-	mutex_lock(&resource->lock);
-	resource->in_use = false;
-	resource->stop_master_peer = NULL;
-	resource->dd_data = NULL;
-	mutex_unlock(&resource->lock);
-
-	// TODO: create/destroy on demand
-
-	/* Restart the queue for future usage */
-	if (restart) {
-		nvme_suspend_queue(nvmeq);
-		adapter_delete_sq(nvmeq->dev, nvmeq->qid);
-		adapter_delete_cq(nvmeq->dev, nvmeq->qid);
-		nvme_create_queue(nvmeq, nvmeq->qid);
-	}
-}
-EXPORT_SYMBOL_GPL(nvme_peer_put_resource);
-
-struct nvme_peer_resource *nvme_peer_get_resource(struct pci_dev *pdev,
-	enum nvme_peer_resource_mask mask,
-	void (* stop_master_peer)(void *priv), void *dd_data)
-{
-	struct nvme_dev *dev = pci_get_drvdata(pdev);
-	struct nvme_queue *nvmeq;
-	unsigned i;
-	int ret;
-
-	if (!dev)
-		return NULL;
-
-	for (i = 0; i < dev->online_queues; i++) {
-		nvmeq = &dev->queues[i];
-		if (nvmeq->p2p) {
-			mutex_lock(&nvmeq->resource.lock);
-			if (!nvmeq->resource.in_use) {
-				ret = nvme_peer_init_resource(nvmeq, mask,
-							      stop_master_peer,
-							      dd_data);
-				if (!ret) {
-					nvmeq->resource.in_use = true;
-					mutex_unlock(&nvmeq->resource.lock);
-					return &nvmeq->resource;
-				}
-			}
-			mutex_unlock(&nvmeq->resource.lock);
-		}
-	}
-
-	return NULL;
-}
-EXPORT_SYMBOL_GPL(nvme_peer_get_resource);
 
 /*
  * Check we didin't inadvertently grow the command struct
@@ -1331,10 +1199,7 @@ static int adapter_alloc_cq(struct nvme_dev *dev, u16 qid,
 		struct nvme_queue *nvmeq, s16 vector)
 {
 	struct nvme_command c;
-	int flags = NVME_QUEUE_PHYS_CONTIG;
-
-	if (!nvmeq->p2p)
-		flags |= NVME_CQ_IRQ_ENABLED;
+	int flags = NVME_QUEUE_PHYS_CONTIG | NVME_CQ_IRQ_ENABLED;
 
 	/*
 	 * Note: we (ab)use the fact that the prp fields survive if no data
@@ -1604,20 +1469,12 @@ static int nvme_suspend_queue(struct nvme_queue *nvmeq)
 		spin_unlock_irq(&nvmeq->cq_lock);
 		return 1;
 	}
-	if (!nvmeq->p2p)
+
 #ifdef HAVE_PCI_FREE_IRQ
-		vector = nvmeq->cq_vector;
+	vector = nvmeq->cq_vector;
 #else
-		vector = nvmeq_irq(nvmeq);
+	vector = nvmeq_irq(nvmeq);
 #endif
-	else {
-		mutex_lock(&nvmeq->resource.lock);
-		if (nvmeq->resource.in_use && nvmeq->resource.stop_master_peer) {
-			mutex_unlock(&nvmeq->resource.lock);
-			nvmeq->resource.stop_master_peer(nvmeq->resource.dd_data);
-		} else
-			mutex_unlock(&nvmeq->resource.lock);
-	}
 
 	nvmeq->dev->online_queues--;
 	nvmeq->cq_vector = -1;
@@ -1629,18 +1486,18 @@ static int nvme_suspend_queue(struct nvme_queue *nvmeq)
 	 */
 	mb();
 
-	if (!nvmeq->qid && nvmeq->dev->ctrl.admin_q)
+	if (!nvmeq->qid && nvmeq->dev->ctrl.admin_q) {
 #ifdef HAVE_BLK_MQ_UNQUIESCE_QUEUE
 		blk_mq_quiesce_queue(nvmeq->dev->ctrl.admin_q);
 #else
 		blk_mq_stop_hw_queues(nvmeq->dev->ctrl.admin_q);
 #endif
+	}
 
-	if (!nvmeq->p2p)
 #ifdef HAVE_PCI_FREE_IRQ
-		pci_free_irq(to_pci_dev(nvmeq->dev->dev), vector, nvmeq);
+	pci_free_irq(to_pci_dev(nvmeq->dev->dev), vector, nvmeq);
 #else
-		free_irq(vector, nvmeq);
+	free_irq(vector, nvmeq);
 #endif
 
 	return 0;
@@ -1730,9 +1587,6 @@ static int nvme_alloc_queue(struct nvme_dev *dev, int qid, int depth)
 	nvmeq->q_depth = depth;
 	nvmeq->qid = qid;
 	nvmeq->cq_vector = -1;
-	nvmeq->p2p = qid > (dev->max_qid - dev->num_p2p_queues);
-	if (nvmeq->p2p)
-		mutex_init(&nvmeq->resource.lock);
 	dev->ctrl.queue_count++;
 
 	return 0;
@@ -1823,11 +1677,9 @@ static int nvme_create_queue(struct nvme_queue *nvmeq, int qid)
 	 */
 	nvmeq->cq_vector = vector;
 	nvme_init_queue(nvmeq, qid);
-	if (!nvmeq->p2p) {
-		result = queue_request_irq(nvmeq);
-		if (result < 0)
-			goto release_sq;
-	}
+	result = queue_request_irq(nvmeq);
+	if (result < 0)
+		goto release_sq;
 
 	return result;
 
@@ -2040,18 +1892,6 @@ static int nvme_create_io_queues(struct nvme_dev *dev)
 	 */
 	return ret >= 0 ? 0 : ret;
 }
-
-static ssize_t nvme_num_p2p_queues_show(struct device *dev,
-					struct device_attribute *attr,
-					char *buf)
-{
-	struct nvme_dev *ndev = to_nvme_dev(dev_get_drvdata(dev));
-	unsigned num_p2p_queues = ndev->online_queues > 1 ?
-			ndev->num_p2p_queues : 0;
-
-	return scnprintf(buf, PAGE_SIZE, "%u\n", num_p2p_queues);
-}
-static DEVICE_ATTR(num_p2p_queues, S_IRUGO, nvme_num_p2p_queues_show, NULL);
 
 static ssize_t nvme_cmb_show(struct device *dev,
 			     struct device_attribute *attr,
@@ -2357,7 +2197,7 @@ static int nvme_setup_io_queues(struct nvme_dev *dev)
 	};
 #endif
 
-	nr_io_queues = num_possible_cpus() + dev->num_p2p_queues;
+	nr_io_queues = num_possible_cpus();
 	result = nvme_set_queue_count(&dev->ctrl, &nr_io_queues);
 	if (result < 0)
 		return result;
@@ -2374,22 +2214,11 @@ static int nvme_setup_io_queues(struct nvme_dev *dev)
 			nvme_release_cmb(dev);
 	}
 
-	if (dev->num_p2p_queues) {
-		if (nr_io_queues <= dev->num_p2p_queues) {
-			if (nr_io_queues > 1)
-				dev->num_p2p_queues = nr_io_queues - 1;//dedicate only 1 io queue for non p2p
-			else
-				dev->num_p2p_queues = 0;//dedicate the only io queue for non p2p
-		}
-	}
-
 	do {
 		size = db_bar_size(dev, nr_io_queues);
 		result = nvme_remap_bar(dev, size);
 		if (!result)
 			break;
-		if (dev->num_p2p_queues)
-			dev->num_p2p_queues--;
 		if (!--nr_io_queues)
 			return -ENOMEM;
 	} while (1);
@@ -2411,18 +2240,18 @@ static int nvme_setup_io_queues(struct nvme_dev *dev)
 #ifdef HAVE_PCI_IRQ_API
 	pci_free_irq_vectors(pdev);
 #ifdef HAVE_IRQ_CALC_AFFINITY_VECTORS_3_ARGS
-	result = pci_alloc_irq_vectors_affinity(pdev, 1, nr_io_queues + 1 - dev->num_p2p_queues,
+	result = pci_alloc_irq_vectors_affinity(pdev, 1, nr_io_queues + 1,
 			PCI_IRQ_ALL_TYPES | PCI_IRQ_AFFINITY, &affd);
 	if (result <= 0)
 		return -EIO;
 	dev->num_vecs = result;
-	dev->max_qid = max(result - 1 + dev->num_p2p_queues, 1u);
+	dev->max_qid = max(result - 1, 1u);
 #else
-	nr_io_queues = pci_alloc_irq_vectors(pdev, 1, nr_io_queues - dev->num_p2p_queues,
+	nr_io_queues = pci_alloc_irq_vectors(pdev, 1, nr_io_queues,
 		PCI_IRQ_ALL_TYPES | PCI_IRQ_AFFINITY);
 	if (nr_io_queues <= 0)
 		return -EIO;
-	dev->max_qid = nr_io_queues + dev->num_p2p_queues;
+	dev->max_qid = nr_io_queues;
 #endif
 #else
 	if (pdev->msi_enabled)
@@ -2430,11 +2259,11 @@ static int nvme_setup_io_queues(struct nvme_dev *dev)
 	else if (pdev->msix_enabled)
 		pci_disable_msix(pdev);
 
-	for (i = 0; i < nr_io_queues - dev->num_p2p_queues; i++)
+	for (i = 0; i < nr_io_queues; i++)
 		dev->entry[i].entry = i;
-	vecs = pci_enable_msix_range(pdev, dev->entry, 1, nr_io_queues - dev->num_p2p_queues);
+	vecs = pci_enable_msix_range(pdev, dev->entry, 1, nr_io_queues);
 	if (vecs < 0) {
-		vecs = pci_enable_msi_range(pdev, 1, min((nr_io_queues - dev->num_p2p_queues), 32u));
+		vecs = pci_enable_msi_range(pdev, 1, min(nr_io_queues, 32));
 		if (vecs < 0) {
 			vecs = 1;
 		} else {
@@ -2443,7 +2272,7 @@ static int nvme_setup_io_queues(struct nvme_dev *dev)
 		}
 	}
 	nr_io_queues = vecs;
-	dev->max_qid = nr_io_queues + dev->num_p2p_queues;
+	dev->max_qid = nr_io_queues;
 #endif
 
 	/*
@@ -2469,12 +2298,12 @@ static void nvme_del_queue_end(struct request *req, blk_status_t error)
 	complete(&nvmeq->dev->ioq_wait);
 }
 
-static void nvme_del_cq_end(struct request *req, blk_status_t error)
+static void nvme_del_cq_end(struct request *req, int error)
 {
 	struct nvme_queue *nvmeq = req->end_io_data;
 	u16 start, end;
 
-	if (!error && !nvmeq->p2p) {
+	if (!error) {
 		unsigned long flags;
 
 		/*
@@ -2552,7 +2381,7 @@ static void nvme_disable_io_queues(struct nvme_dev *dev)
  */
 static int nvme_dev_add(struct nvme_dev *dev)
 {
-	unsigned nr_hw_queues = dev->online_queues - 1 - dev->num_p2p_queues;
+	unsigned nr_hw_queues = dev->online_queues - 1;
 	int ret;
 
 	if (!dev->ctrl.tagset) {
@@ -3069,12 +2898,10 @@ static int nvme_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto free;
 #endif
 
-	dev->queues = kcalloc_node(num_possible_cpus() + 1 + num_p2p_queues,
-			sizeof(struct nvme_queue), GFP_KERNEL, node);
+	dev->queues = kzalloc_node((num_possible_cpus() + 1) * sizeof(struct nvme_queue), GFP_KERNEL, node);
 	if (!dev->queues)
 		goto free;
 
-	dev->num_p2p_queues = num_p2p_queues;
 	dev->dev = get_device(&pdev->dev);
 	pci_set_drvdata(pdev, dev);
 
@@ -3097,17 +2924,6 @@ static int nvme_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 			quirks);
 	if (result)
 		goto release_pools;
-
-	/*
-	 * We populate sysfs to know how many p2p queues can be totaly created.
-	 * Note that we add the P2P attribute to the nvme_ctrl kobj which removes
-	 * the need to remove it on exit. Since nvme_dev_attrs_group has no name we can pass
-	 * NULL as final argument to sysfs_add_file_to_group.
-	 */
-	if (sysfs_add_file_to_group(&dev->ctrl.device->kobj,
-				    &dev_attr_num_p2p_queues.attr, NULL))
-		dev_warn(dev->ctrl.device,
-			 "failed to add sysfs attribute for num P2P queues\n");
 
 	dev_info(dev->ctrl.device, "pci function %s\n", dev_name(&pdev->dev));
 
