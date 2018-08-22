@@ -26,8 +26,6 @@
 #include <linux/pr.h>
 #endif
 #include <linux/ptrace.h>
-#include <linux/nvme_ioctl.h>
-#include <linux/t10-pi.h>
 #ifdef HAVE_DEV_PM_INFO_SET_LATENCY_TOLERANCE
 #include <linux/pm_qos.h>
 #endif
@@ -35,7 +33,7 @@
 
 #define CREATE_TRACE_POINTS
 #include "trace.h"
-
+#include "uapi_nvme_ioctl.h"
 #include "nvme.h"
 #include "fabrics.h"
 
@@ -997,7 +995,11 @@ static int nvme_submit_user_cmd(struct request_queue *q,
 	return ret;
 }
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,13,0))
+static void nvme_keep_alive_end_io(struct request *rq, int status)
+#else
 static void nvme_keep_alive_end_io(struct request *rq, blk_status_t status)
+#endif
 {
 	struct nvme_ctrl *ctrl = rq->end_io_data;
 
@@ -2079,16 +2081,41 @@ static void nvme_set_queue_limits(struct nvme_ctrl *ctrl,
 	if ((ctrl->quirks & NVME_QUIRK_STRIPE_SIZE) &&
 	    is_power_of_2(ctrl->max_hw_sectors))
 		blk_queue_chunk_sectors(q, ctrl->max_hw_sectors);
-#ifdef HAVE_BLK_QUEUE_VIRT_BOUNDARY
 	blk_queue_virt_boundary(q, ctrl->page_size - 1);
-#else
-	if (!ctrl->sg_gaps_support)
-		queue_flag_set_unlocked(QUEUE_FLAG_SG_GAPS, q);
-#endif
 	if (ctrl->vwc & NVME_CTRL_VWC_PRESENT)
 		vwc = true;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,7,0))
 	blk_queue_write_cache(q, vwc, vwc);
+#else
+	if (vwc) { blk_queue_flush(q, REQ_FLUSH | REQ_FUA); }
+#endif
 }
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,19,0)) /* dev_warn_once */
+// include/linux/device.h
+
+#ifdef CONFIG_PRINTK
+#define dev_level_once(dev_level, dev, fmt, ...)			\
+do {									\
+	static bool __print_once __read_mostly;				\
+									\
+	if (!__print_once) {						\
+		__print_once = true;					\
+		dev_level(dev, fmt, ##__VA_ARGS__);			\
+	}								\
+} while (0)
+#else
+#define dev_level_once(dev_level, dev, fmt, ...)			\
+do {									\
+	if (0)								\
+		dev_level(dev, fmt, ##__VA_ARGS__);			\
+} while (0)
+#endif
+
+#define dev_warn_once(dev, fmt, ...)					\
+	dev_level_once(dev_warn, dev, fmt, ##__VA_ARGS__)
+
+#endif	/* dev_warn_once */
 
 static int nvme_configure_timestamp(struct nvme_ctrl *ctrl)
 {
@@ -3776,6 +3803,89 @@ void nvme_start_ctrl(struct nvme_ctrl *ctrl)
 }
 EXPORT_SYMBOL_GPL(nvme_start_ctrl);
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,12,0)) /* cdev */
+// fs/char_dev.c
+
+/**
+ * cdev_set_parent() - set the parent kobject for a char device
+ * @p: the cdev structure
+ * @kobj: the kobject to take a reference to
+ *
+ * cdev_set_parent() sets a parent kobject which will be referenced
+ * appropriately so the parent is not freed before the cdev. This
+ * should be called before cdev_add.
+ */
+static inline void cdev_set_parent(struct cdev *p, struct kobject *kobj)
+{
+	WARN_ON(!kobj->state_initialized);
+	p->kobj.parent = kobj;
+}
+
+/**
+ * cdev_device_add() - add a char device and it's corresponding
+ *	struct device, linkink
+ * @dev: the device structure
+ * @cdev: the cdev structure
+ *
+ * cdev_device_add() adds the char device represented by @cdev to the system,
+ * just as cdev_add does. It then adds @dev to the system using device_add
+ * The dev_t for the char device will be taken from the struct device which
+ * needs to be initialized first. This helper function correctly takes a
+ * reference to the parent device so the parent will not get released until
+ * all references to the cdev are released.
+ *
+ * This helper uses dev->devt for the device number. If it is not set
+ * it will not add the cdev and it will be equivalent to device_add.
+ *
+ * This function should be used whenever the struct cdev and the
+ * struct device are members of the same structure whose lifetime is
+ * managed by the struct device.
+ *
+ * NOTE: Callers must assume that userspace was able to open the cdev and
+ * can call cdev fops callbacks at any time, even if this function fails.
+ */
+static inline int cdev_device_add(struct cdev *cdev, struct device *dev)
+{
+	int rc = 0;
+
+	if (dev->devt) {
+		cdev_set_parent(cdev, &dev->kobj);
+
+		rc = cdev_add(cdev, dev->devt, 1);
+		if (rc)
+			return rc;
+	}
+
+	rc = device_add(dev);
+	if (rc)
+		cdev_del(cdev);
+
+	return rc;
+}
+
+/**
+ * cdev_device_del() - inverse of cdev_device_add
+ * @dev: the device structure
+ * @cdev: the cdev structure
+ *
+ * cdev_device_del() is a helper function to call cdev_del and device_del.
+ * It should be used whenever cdev_device_add is used.
+ *
+ * If dev->devt is not set it will not remove the cdev and will be equivalent
+ * to device_del.
+ *
+ * NOTE: This guarantees that associated sysfs callbacks are not running
+ * or runnable, however any cdevs already open will remain and their fops
+ * will still be callable even after this function returns.
+ */
+static inline void cdev_device_del(struct cdev *cdev, struct device *dev)
+{
+	device_del(dev);
+	if (dev->devt)
+		cdev_del(cdev);
+}
+#endif	/* cdev */
+
 void nvme_uninit_ctrl(struct nvme_ctrl *ctrl)
 {
 	cdev_device_del(&ctrl->cdev, ctrl->device);
@@ -3861,7 +3971,9 @@ int nvme_init_ctrl(struct nvme_ctrl *ctrl, struct device *dev,
 
 	return 0;
 out_free_name:
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,0,0))
 	kfree_const(dev->kobj.name);
+#endif
 out_release_instance:
 	ida_simple_remove(&nvme_instance_ida, ctrl->instance);
 out:
@@ -3921,6 +4033,22 @@ void nvme_unfreeze(struct nvme_ctrl *ctrl)
 	up_read(&ctrl->namespaces_rwsem);
 }
 EXPORT_SYMBOL_GPL(nvme_unfreeze);
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,11,0)) /* blk_mq_freeze */
+// block/blk-mq.c
+static inline void blk_mq_freeze_queue_wait(struct request_queue *q)
+{
+	wait_event(q->mq_freeze_wq, percpu_ref_is_zero(&q->mq_usage_counter));
+}
+
+static inline int blk_mq_freeze_queue_wait_timeout(struct request_queue *q,
+				     unsigned long timeout)
+{
+	return wait_event_timeout(q->mq_freeze_wq,
+					percpu_ref_is_zero(&q->mq_usage_counter),
+					timeout);
+}
+#endif	/* blk_mq_freeze */
 
 void nvme_wait_freeze_timeout(struct nvme_ctrl *ctrl, long timeout)
 {

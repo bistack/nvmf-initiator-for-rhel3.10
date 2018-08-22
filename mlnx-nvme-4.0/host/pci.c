@@ -12,11 +12,15 @@
  * more details.
  */
 
+#include <linux/version.h>
+#include <linux/types.h>
 #include <linux/aer.h>
 #include <linux/async.h>
 #include <linux/blkdev.h>
 #include <linux/blk-mq.h>
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,9,0))
 #include <linux/blk-mq-pci.h>
+#endif
 #include <linux/dmi.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
@@ -28,7 +32,6 @@
 #include <linux/once.h>
 #endif
 #include <linux/pci.h>
-//#include <linux/t10-pi.h>
 
 #ifdef HAVE_IO_64_NONATOMIC_LO_HI_H
 #include <linux/io-64-nonatomic-lo-hi.h>
@@ -987,8 +990,13 @@ static void nvme_unmap_data(struct nvme_dev *dev, struct request *req)
 /*
  * NOTE: ns is NULL when called on the admin queue.
  */
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,13,0))
+static int nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
+			const struct blk_mq_queue_data *bd)
+#else
 static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 			 const struct blk_mq_queue_data *bd)
+#endif
 {
 	struct nvme_ns *ns = hctx->queue->queuedata;
 	struct nvme_queue *nvmeq = hctx->driver_data;
@@ -1256,7 +1264,11 @@ static int adapter_delete_sq(struct nvme_dev *dev, u16 sqid)
 	return adapter_delete_queue(dev, nvme_admin_delete_sq, sqid);
 }
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,13,0))
+static void abort_endio(struct request *req, int error)
+#else
 static void abort_endio(struct request *req, blk_status_t error)
+#endif
 {
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
 	struct nvme_queue *nvmeq = iod->nvmeq;
@@ -1700,9 +1712,7 @@ static struct blk_mq_ops nvme_mq_admin_ops = {
 #endif
 	.queue_rq	= nvme_queue_rq,
 	.complete	= nvme_pci_complete_rq,
-#ifdef HAVE_BLK_MQ_OPS_MAP_QUEUE
 	.map_queue      = blk_mq_map_queue,
-#endif
 	.init_hctx	= nvme_admin_init_hctx,
 	.exit_hctx      = nvme_admin_exit_hctx,
 #ifdef HAVE_BLK_MQ_OPS_INIT_REQUEST_HAS_4_PARAMS
@@ -1720,9 +1730,7 @@ static struct blk_mq_ops nvme_mq_ops = {
 #endif
 	.queue_rq	= nvme_queue_rq,
 	.complete	= nvme_pci_complete_rq,
-#ifdef HAVE_BLK_MQ_OPS_MAP_QUEUE
 	.map_queue      = blk_mq_map_queue,
-#endif
 	.init_hctx	= nvme_init_hctx,
 	.init_request	= nvme_init_request,
 #ifdef HAVE_BLK_MQ_OPS_MAP_QUEUES
@@ -2290,7 +2298,11 @@ static int nvme_setup_io_queues(struct nvme_dev *dev)
 	return nvme_create_io_queues(dev);
 }
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,13,0))
+static void nvme_del_queue_end(struct request *req, int error)
+#else
 static void nvme_del_queue_end(struct request *req, blk_status_t error)
+#endif
 {
 	struct nvme_queue *nvmeq = req->end_io_data;
 
@@ -2494,6 +2506,23 @@ static int nvme_pci_enable(struct nvme_dev *dev)
 	pci_disable_device(pdev);
 	return result;
 }
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,8,0)) /* pci_mem_regions */
+// include/linux/pci.h
+static inline int
+pci_request_mem_regions(struct pci_dev *pdev, const char *name)
+{
+	return pci_request_selected_regions(pdev,
+			    pci_select_bars(pdev, IORESOURCE_MEM), name);
+}
+
+static inline void
+pci_release_mem_regions(struct pci_dev *pdev)
+{
+	return pci_release_selected_regions(pdev,
+			    pci_select_bars(pdev, IORESOURCE_MEM));
+}
+#endif	/* pci_mem_regions */
 
 static void nvme_dev_unmap(struct nvme_dev *dev)
 {
@@ -2876,6 +2905,11 @@ static void nvme_async_probe(void *data, async_cookie_t cookie)
 	flush_work(&dev->ctrl.scan_work);
 	nvme_put_ctrl(&dev->ctrl);
 }
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0))
+//include/linux/nodemask.h
+#define first_memory_node	first_node(node_states[N_MEMORY])
+#endif
 
 static int nvme_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {

@@ -14,7 +14,7 @@
 #ifndef _NVME_H
 #define _NVME_H
 
-#include <linux/nvme.h>
+#include <linux/version.h>
 #include <linux/cdev.h>
 #include <linux/pci.h>
 #include <linux/kref.h>
@@ -27,6 +27,23 @@
 #endif
 #include <linux/fault-inject.h>
 #include <linux/rcupdate.h>
+#include <linux/idr.h>
+#include <linux/uuid.h>
+
+#include "invme.h"
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,18,0)) /* t10-pi */
+/*
+ * T10 Protection Information tuple.
+ */
+struct t10_pi_tuple {
+	__be16 guard_tag;	/* Checksum */
+	__be16 app_tag;		/* Opaque storage */
+	__be32 ref_tag;		/* Target LBA or indirect LBA */
+};
+#else
+#include <linux/t10-pi.h>
+#endif	/* t10-pi */
 
 extern unsigned int nvme_io_timeout;
 #define NVME_IO_TIMEOUT	(nvme_io_timeout * HZ)
@@ -257,6 +274,20 @@ struct nvme_subsystem {
 	struct ida		ns_ida;
 };
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,13,0)) /* uuid_t */
+typedef uuid_le uuid_t;
+
+static inline bool uuid_equal(const uuid_t *u1, const uuid_t *u2)
+{
+	return memcmp(u1, u2, sizeof(uuid_t)) == 0;
+}
+
+static inline void uuid_copy(uuid_t *dst, const uuid_t *src)
+{
+	memcpy(dst, src, sizeof(uuid_t));
+}
+#endif	/* uuid_t */
+
 /*
  * Container structure for uniqueue namespace identifiers.
  */
@@ -480,6 +511,22 @@ struct request *nvme_alloc_request(struct request_queue *q,
 struct request *nvme_alloc_request(struct request_queue *q,
 		struct nvme_command *cmd, gfp_t gfp, bool reserved, int qid);
 #endif
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,13,0)) /* blk_status_t */
+typedef u8 __bitwise blk_status_t;
+#define BLK_STS_OK		0
+#define BLK_STS_NOTSUPP	((__force blk_status_t)1)
+#define BLK_STS_TIMEOUT	((__force blk_status_t)2)
+#define BLK_STS_NOSPC		((__force blk_status_t)3)
+#define BLK_STS_TRANSPORT	((__force blk_status_t)4)
+#define BLK_STS_TARGET		((__force blk_status_t)5)
+#define BLK_STS_NEXUS		((__force blk_status_t)6)
+#define BLK_STS_MEDIUM		((__force blk_status_t)7)
+#define BLK_STS_PROTECTION	((__force blk_status_t)8)
+#define BLK_STS_RESOURCE	((__force blk_status_t)9)
+#define BLK_STS_IOERR		((__force blk_status_t)10)
+#endif	/* blk_status_t */
+
 blk_status_t nvme_setup_cmd(struct nvme_ns *ns, struct request *req,
 		struct nvme_command *cmd);
 int nvme_submit_sync_cmd(struct request_queue *q, struct nvme_command *cmd,
@@ -627,6 +674,69 @@ static inline unsigned short blk_rq_nr_phys_segments(struct request *rq)
 }
 #endif
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,7,0)) /* blk_mq_tagset */
+static inline void blk_mq_tagset_busy_iter(struct blk_mq_tag_set *tagset,
+		busy_tag_iter_fn *fn, void *priv)
+{
+	int i;
 
+	for (i = 0; i < tagset->nr_hw_queues; i++) {
+		if (tagset->tags && tagset->tags[i])
+			blk_mq_all_tag_busy_iter(tagset->tags[i], fn, priv);
+	}
+}
+#endif	/* blk_mq_tagset */
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,17,0)) /* blk_queue_flag */
+// block/blk-core.c
+
+/**
+ * blk_queue_flag_set - atomically set a queue flag
+ * @flag: flag to be set
+ * @q: request queue
+ */
+static inline void blk_queue_flag_set(unsigned int flag, struct request_queue *q)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(q->queue_lock, flags);
+	queue_flag_set(flag, q);
+	spin_unlock_irqrestore(q->queue_lock, flags);
+}
+
+/**
+ * blk_queue_flag_clear - atomically clear a queue flag
+ * @flag: flag to be cleared
+ * @q: request queue
+ */
+static inline void blk_queue_flag_clear(unsigned int flag, struct request_queue *q)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(q->queue_lock, flags);
+	queue_flag_clear(flag, q);
+	spin_unlock_irqrestore(q->queue_lock, flags);
+}
+
+/**
+ * blk_queue_flag_test_and_set - atomically test and set a queue flag
+ * @flag: flag to be set
+ * @q: request queue
+ *
+ * Returns the previous value of @flag - 0 if the flag was not set and 1 if
+ * the flag was already set.
+ */
+static inline bool blk_queue_flag_test_and_set(unsigned int flag, struct request_queue *q)
+{
+	unsigned long flags;
+	bool res;
+
+	spin_lock_irqsave(q->queue_lock, flags);
+	res = queue_flag_test_and_set(flag, q);
+	spin_unlock_irqrestore(q->queue_lock, flags);
+
+	return res;
+}
+#endif	/* blk_queue_flag */
 
 #endif /* _NVME_H */
