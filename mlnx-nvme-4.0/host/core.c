@@ -33,7 +33,11 @@
 
 #define CREATE_TRACE_POINTS
 #include "trace.h"
-#include "uapi_nvme_ioctl.h"
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,0))
+#include <uapi/linux/nvme_ioctl.h>
+#else
+#include "include/uapi/linux/nvme_ioctl.h"
+#endif
 #include "nvme.h"
 #include "fabrics.h"
 

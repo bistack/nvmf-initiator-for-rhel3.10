@@ -30,7 +30,11 @@
 #include <linux/idr.h>
 #include <linux/uuid.h>
 
-#include "invme.h"
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,9,0))
+#include <linux/nvme.h>
+#else
+#include "include/linux/nvme.h"
+#endif
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(3,18,0)) /* t10-pi */
 /*
