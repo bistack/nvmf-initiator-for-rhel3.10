@@ -39,6 +39,7 @@
 #if !defined(IB_VERBS_H)
 #define IB_VERBS_H
 
+#include <linux/version.h>
 #include <linux/types.h>
 #include <linux/device.h>
 #include <linux/mm.h>
@@ -49,7 +50,9 @@
 #include <linux/scatterlist.h>
 #include <linux/workqueue.h>
 #include <linux/socket.h>
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,5,0))
 #include <linux/irq_poll.h>
+#endif
 #include <uapi/linux/if_ether.h>
 #include <net/ipv6.h>
 #include <net/ip.h>
@@ -61,27 +64,13 @@
 #include <linux/atomic.h>
 #include <linux/mmu_notifier.h>
 #include <linux/uaccess.h>
-#include <linux/cgroup_rdma.h>
-#include <uapi/rdma/ib_user_verbs.h>
-#include <rdma/ib_verbs_exp_def.h>
-#include <rdma/restrack.h>
+#include "include/uapi/rdma/ib_user_verbs.h"
+#include "include/rdma/restrack.h"
 
 #define IB_FW_VERSION_NAME_MAX	ETHTOOL_FWVERS_LEN
 
 extern struct workqueue_struct *ib_wq;
 extern struct workqueue_struct *ib_comp_wq;
-struct ib_cq_attr;
-struct ib_exp_qp_init_attr;
-struct ib_exp_device_attr;
-struct ib_dct_attr;
-struct ib_dct_init_attr;
-struct ib_mkey_attr;
-struct ib_exp_context_attr;
-struct ib_nvmf_ctrl;
-struct ib_nvmf_backend_ctrl_init_attr;
-struct ib_nvmf_ns;
-struct ib_nvmf_ns_init_attr;
-struct ib_nvmf_ns_attr;
 struct ib_mr_init_attr;
 
 union ib_gid {
@@ -253,8 +242,6 @@ enum ib_device_cap_flags {
 	IB_DEVICE_RDMA_NETDEV_OPA_VNIC		= (1ULL << 35),
 	/* The device supports padding incoming writes to cacheline. */
 	IB_DEVICE_PCI_WRITE_END_PADDING		= (1ULL << 36),
-	/* Jump to this value to minimize conflicts with upstream */
-	IB_DEVICE_NVMF_TARGET_OFFLOAD		= (1ULL << 60),
 };
 
 enum ib_signature_prot_cap {
@@ -392,7 +379,6 @@ struct ib_device_attr {
 	int			sig_prot_cap;
 	int			sig_guard_cap;
 	struct ib_odp_caps	odp_caps;
-	struct ib_nvmf_caps	nvmf_caps;
 	uint64_t		timestamp_mask;
 	uint64_t		hca_core_clock; /* in KHZ */
 	struct ib_rss_caps	rss_caps;
@@ -673,14 +659,6 @@ enum ib_event_type {
 	IB_EVENT_CLIENT_REREGISTER,
 	IB_EVENT_GID_CHANGE,
 	IB_EVENT_WQ_FATAL,
-	/* New experimental events start here leaving enough
-	 * room for 14 events which should be enough.
-	 */
-	IB_EXP_EVENT_DCT_KEY_VIOLATION = 32,
-	IB_EXP_EVENT_DCT_ACCESS_ERR,
-	IB_EXP_EVENT_DCT_REQ_ERR,
-	IB_EXP_EVENT_XRQ_QP_ERR,
-	IB_EXP_EVENT_XRQ_NVMF_BACKEND_CTRL_ERR,
 };
 
 const char *__attribute_const__ ib_event_msg(enum ib_event_type event);
@@ -1052,16 +1030,12 @@ enum ib_srq_type {
 	IB_SRQT_BASIC,
 	IB_SRQT_XRC,
 	IB_SRQT_TM,
-	IB_EXP_SRQT_TAG_MATCHING = 32,
-	IB_EXP_SRQT_NVMF,
 };
 
 static inline bool ib_srq_has_cq(enum ib_srq_type srq_type)
 {
 	return srq_type == IB_SRQT_XRC ||
-	       srq_type == IB_SRQT_TM ||
-	       srq_type == IB_EXP_SRQT_TAG_MATCHING ||
-	       srq_type == IB_EXP_SRQT_NVMF;
+	       srq_type == IB_SRQT_TM;
 }
 
 enum ib_srq_attr_mask {
@@ -1073,7 +1047,6 @@ struct ib_srq_attr {
 	u32	max_wr;
 	u32	max_sge;
 	u32	srq_limit;
-	struct ib_nvmf_srq_attr nvmf;
 };
 
 struct ib_srq_init_attr {
@@ -1093,7 +1066,6 @@ struct ib_srq_init_attr {
 				u32		max_num_tags;
 			} tag_matching;
 		};
-		struct ib_nvmf_init_data nvmf;
 	} ext;
 };
 
@@ -1327,11 +1299,7 @@ struct ib_qp_attr {
 	u8			rnr_retry;
 	u8			alt_port_num;
 	u8			alt_timeout;
-	u64			dct_key;
 	u32			rate_limit;
-	u32			flow_entropy;
-	enum ib_qp_offload_type	offload_type;
-	struct ib_exp_burst_info	burst_info;
 };
 
 enum ib_wr_opcode {
@@ -1546,7 +1514,11 @@ struct ib_ucontext {
 
 	struct pid             *tgid;
 #ifdef CONFIG_INFINIBAND_ON_DEMAND_PAGING
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,14,0))
+	struct rb_root          umem_tree;
+#else
 	struct rb_root_cached   umem_tree;
+#endif
 	/*
 	 * Protects .umem_rbroot and tree, as well as odp_mrs_count and
 	 * mmu notifiers registration.
@@ -1668,7 +1640,9 @@ struct ib_cq {
 	enum ib_poll_context	poll_ctx;
 	struct ib_wc		*wc;
 	union {
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,5,0))
 		struct irq_poll		iop;
+#endif
 		struct work_struct	work;
 	};
 	/*
@@ -1854,7 +1828,6 @@ struct ib_qp {
 	struct ib_rwq_ind_table *rwq_ind_tbl;
 	struct ib_qp_security  *qp_sec;
 	u8			port;
-	enum ib_qpg_type        qpg_type;
 
 	/*
 	 * Implementation details of the RDMA core, don't use in drivers:
@@ -2285,59 +2258,6 @@ struct ib_device {
 	struct iw_cm_verbs	     *iwcm;
 
 	struct kobject		      *mad_sa_cc_kobj;
-
-	/* EXP APIs will be added below to minimize conflicts via upstream rebase */
-	int                     (*query_nvmf_ns)(struct ib_nvmf_ns *ns,
-						 struct ib_nvmf_ns_attr *ns_attr);
-	struct ib_nvmf_ctrl *   (*create_nvmf_backend_ctrl)(struct ib_srq *srq,
-				struct ib_nvmf_backend_ctrl_init_attr *init_attr);
-	int                     (*destroy_nvmf_backend_ctrl)(struct ib_nvmf_ctrl *ctrl);
-	struct ib_nvmf_ns *     (*attach_nvmf_ns)(struct ib_nvmf_ctrl *ctrl,
-				struct ib_nvmf_ns_init_attr *init_attr);
-	int                     (*detach_nvmf_ns)(struct ib_nvmf_ns *ns);
-	int                     (*exp_ioctl)(struct ib_ucontext *context, unsigned int cmd,
-					     unsigned long arg);
-	int			(*exp_query_device)(struct ib_device *device,
-						    struct ib_exp_device_attr *device_attr,
-						    struct ib_udata *udata);
-	struct ib_qp *		(*exp_create_qp)(struct ib_pd *pd,
-						 struct ib_exp_qp_init_attr *qp_init_attr,
-						 struct ib_udata *udata);
-	int			(*exp_modify_cq)(struct ib_cq *cq, struct ib_cq_attr *cq_attr,
-						 int cq_attr_mask);
-	struct ib_dct *		(*exp_create_dct)(struct ib_pd *pd,
-						  struct ib_dct_init_attr *attr,
-						  struct ib_udata *udata);
-	int			(*exp_destroy_dct)(struct ib_dct *dct);
-	int			(*exp_query_dct)(struct ib_dct *dct, struct ib_dct_attr *attr);
-	int			(*exp_arm_dct)(struct ib_dct *dct, struct ib_udata *udata);
-	int			(*exp_query_mkey)(struct ib_mr *mr,
-						  u64 mkey_attr_mask,
-						  struct ib_mkey_attr *mkey_attr);
-	u64			uverbs_exp_cmd_mask;
-	struct ib_odp_statistics     odp_statistics;
-	unsigned long		   (*exp_get_unmapped_area)(struct file *file,
-							    unsigned long addr,
-							    unsigned long len,
-							    unsigned long pgoff,
-							    unsigned long flags);
-	int			(*exp_set_context_attr)(struct ib_device *device,
-							struct ib_ucontext *context,
-							struct ib_exp_context_attr *attr);
-	struct ib_dm *             (*exp_alloc_dm)(struct ib_device *device,
-						   struct ib_ucontext *context,
-						   u64 length, u64 uaddr,
-						   struct ib_udata *udata);
-	int                        (*exp_free_dm)(struct ib_dm *dm);
-	int                        (*exp_memcpy_dm)(struct ib_dm *dm,
-						    struct ib_exp_memcpy_dm_attr *attr);
-	struct ib_mr *             (*exp_alloc_mr)(struct ib_pd *pd,
-						   struct ib_mr_init_attr *attr);
-	int			(*exp_invalidate_range)(struct ib_device *device,
-							struct ib_mr *ibmr,
-							u64 start,
-							u64 length,
-							u32 flags);
 
 	/**
 	 * alloc_hw_stats - Allocate a struct rdma_hw_stats and fill in the
@@ -3660,6 +3580,7 @@ static inline void ib_dma_unmap_sg(struct ib_device *dev,
 	dma_unmap_sg(dev->dma_device, sg, nents, direction);
 }
 
+/*
 static inline int ib_dma_map_sg_attrs(struct ib_device *dev,
 				      struct scatterlist *sg, int nents,
 				      enum dma_data_direction direction,
@@ -3676,6 +3597,8 @@ static inline void ib_dma_unmap_sg_attrs(struct ib_device *dev,
 {
 	dma_unmap_sg_attrs(dev->dma_device, sg, nents, direction, dma_attrs);
 }
+*/
+
 /**
  * ib_sg_dma_address - Return the DMA address from a scatter/gather entry
  * @dev: The device for which the DMA addresses were created
@@ -3919,41 +3842,11 @@ static inline int ib_active_speed_enum_to_rate(enum ib_port_speed active_speed,
 static inline int ib_check_mr_access(int flags)
 {
 	/*
-	 * Using a physical address memory region is allowed only when:
-	 * - Application is capable of writing to physical memory
-	 * - With access flags: local write, remote write/read/atomic
-	 */
-	if (flags & IB_EXP_ACCESS_PHYSICAL_ADDR) {
-#ifdef CONFIG_INFINIBAND_PA_MR
-		if (!capable(CAP_SYS_RAWIO))
-			return -EPERM;
-
-		if (flags ^ (flags & (IB_ACCESS_LOCAL_WRITE  |
-				      IB_ACCESS_REMOTE_WRITE |
-				      IB_ACCESS_REMOTE_READ  |
-				      IB_ACCESS_REMOTE_ATOMIC |
-				      IB_EXP_ACCESS_PHYSICAL_ADDR)))
-			return -EINVAL;
-#else
-		pr_debug("Physical address MR not supported, recompile with: --with-pa-mr\n");
-		return -EINVAL;
-#endif /* CONFIG_INFINIBAND_PA_MR */
-	}
-
-	/*
 	 * Local write permission is required if remote write or
 	 * remote atomic permission is also requested.
 	 */
 	if (flags & (IB_ACCESS_REMOTE_ATOMIC | IB_ACCESS_REMOTE_WRITE) &&
 	    !(flags & IB_ACCESS_LOCAL_WRITE))
-		return -EINVAL;
-
-	/*
-	 * Tunneld atomic requires both local and remote write permission
-	 */
-	if ((flags & IB_EXP_ACCESS_TUNNELED_ATOMIC) &&
-	    (!(flags & IB_ACCESS_LOCAL_WRITE) ||
-	     !(flags & IB_ACCESS_REMOTE_WRITE)))
 		return -EINVAL;
 
 	return 0;
@@ -4235,5 +4128,4 @@ ib_get_vector_affinity(struct ib_device *device, int comp_vector)
 
 }
 
-#include <rdma/ib_verbs_exp.h>
 #endif /* IB_VERBS_H */
