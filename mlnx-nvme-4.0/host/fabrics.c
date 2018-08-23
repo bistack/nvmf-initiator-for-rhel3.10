@@ -21,8 +21,70 @@
 #include <linux/mutex.h>
 #include <linux/parser.h>
 #include <linux/seq_file.h>
+#include <linux/ctype.h>
 #include "nvme.h"
 #include "fabrics.h"
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,13,0)) /* uuid_t */
+/*
+ * The length of a UUID string ("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+ * not including trailing NUL.
+ */
+#define	UUID_STRING_LEN		36
+
+const u8 uuid_index[16] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15};
+
+/**
+ * uuid_is_valid - checks if a UUID string is valid
+ * @uuid:	UUID string to check
+ *
+ * Description:
+ * It checks if the UUID string is following the format:
+ *	xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+ *
+ * where x is a hex digit.
+ *
+ * Return: true if input is valid UUID string.
+ */
+bool uuid_is_valid(const char *uuid)
+{
+	unsigned int i;
+
+	for (i = 0; i < UUID_STRING_LEN; i++) {
+		if (i == 8 || i == 13 || i == 18 || i == 23) {
+			if (uuid[i] != '-')
+				return false;
+		} else if (!isxdigit(uuid[i])) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static int __uuid_parse(const char *uuid, __u8 b[16], const u8 ei[16])
+{
+	static const u8 si[16] = {0,2,4,6,9,11,14,16,19,21,24,26,28,30,32,34};
+	unsigned int i;
+
+	if (!uuid_is_valid(uuid))
+		return -EINVAL;
+
+	for (i = 0; i < 16; i++) {
+		int hi = hex_to_bin(uuid[si[i] + 0]);
+		int lo = hex_to_bin(uuid[si[i] + 1]);
+
+		b[ei[i]] = (hi << 4) | lo;
+	}
+
+	return 0;
+}
+
+static int uuid_parse(const char *uuid, uuid_t *u)
+{
+	return __uuid_parse(uuid, u->b, uuid_index);
+}
+#endif	/* uuid_t */
 
 static LIST_HEAD(nvmf_transports);
 static DECLARE_RWSEM(nvmf_transports_rwsem);
@@ -604,7 +666,10 @@ blk_status_t nvmf_check_if_ready(struct nvme_ctrl *ctrl, struct request *rq,
 		 * will reject any ioctl admin cmd as well as initialization
 		 * commands if the controller reverted the queue to non-live.
 		 */
-		if (!queue_live && blk_rq_is_passthrough(rq) &&
+		if (!queue_live &&
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,12,0))
+			blk_rq_is_passthrough(rq) &&
+#endif
 		     cmd->common.opcode == nvme_fabrics_command &&
 		     cmd->fabrics.fctype == nvme_fabrics_type_connect)
 			return BLK_STS_OK;
@@ -1018,6 +1083,40 @@ out_free_opts:
 	nvmf_free_options(opts);
 	return ERR_PTR(ret);
 }
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,5,0)) /* memdup_user_nul */
+// mm/util.c
+
+/**
+ * memdup_user_nul - duplicate memory region from user space and NUL-terminate
+ *
+ * @src: source address in user space
+ * @len: number of bytes to copy
+ *
+ * Returns an ERR_PTR() on failure.
+ */
+void *memdup_user_nul(const void __user *src, size_t len)
+{
+	char *p;
+
+	/*
+	 * Always use GFP_KERNEL, since copy_from_user() can sleep and
+	 * cause pagefault, which makes it pointless to use GFP_NOFS
+	 * or GFP_ATOMIC.
+	 */
+	p = kmalloc(len + 1, GFP_KERNEL);
+	if (!p)
+		return ERR_PTR(-ENOMEM);
+
+	if (copy_from_user(p, src, len)) {
+		kfree(p);
+		return ERR_PTR(-EFAULT);
+	}
+	p[len] = '\0';
+
+	return p;
+}
+#endif	/* memdup_user_nul */
 
 static struct class *nvmf_class;
 static struct device *nvmf_device;

@@ -290,6 +290,8 @@ static inline void uuid_copy(uuid_t *dst, const uuid_t *src)
 {
 	memcpy(dst, src, sizeof(uuid_t));
 }
+
+#define uuid_gen uuid_le_gen
 #endif	/* uuid_t */
 
 /*

@@ -24,18 +24,6 @@
 /* default to 600 seconds of reconnect attempts before giving up */
 #define NVMF_DEF_CTRL_LOSS_TMO		600
 
-#ifdef NVMF_NQN_FIELD_LEN
-#undef NVMF_NQN_FIELD_LEN
-#endif
-/* NQN names in commands fields specified one size */
-#define NVMF_NQN_FIELD_LEN	256
-
-#ifdef NVMF_NQN_SIZE
-#undef NVMF_NQN_SIZE
-#endif
-/* However the max length of a qualified name is another size */
-#define NVMF_NQN_SIZE		223
-
 /*
  * Define a host as seen by the target.  We allocate one at boot, but also
  * allow the override it when creating controllers.  This is both to provide

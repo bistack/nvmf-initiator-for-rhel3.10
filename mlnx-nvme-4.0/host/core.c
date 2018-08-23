@@ -452,35 +452,31 @@ struct request *nvme_alloc_request(struct request_queue *q,
 		struct nvme_command *cmd, gfp_t gfp, bool reserved, int qid)
 #endif
 {
+	struct request *req;
 #ifdef HAVE_BLK_TYPES_REQ_OP_DRV_OUT
 	unsigned op = nvme_is_write(cmd) ? REQ_OP_DRV_OUT : REQ_OP_DRV_IN;
-#endif
-	struct request *req;
-
 	if (qid == NVME_QID_ANY) {
-#ifdef HAVE_BLK_TYPES_REQ_OP_DRV_OUT
 		req = blk_mq_alloc_request(q, op, flags);
-#else
-#ifdef HAVE_BLK_MQ_ALLOC_REQUEST_HAS_3_PARAMS
-		req = blk_mq_alloc_request(q, nvme_is_write(cmd), flags);
-#else
-		req = blk_mq_alloc_request(q, nvme_is_write(cmd), gfp, reserved);
-#endif /* HAVE_BLK_MQ_ALLOC_REQUEST_HAS_3_PARAMS */
-#endif
 	} else {
-#ifdef HAVE_BLK_TYPES_REQ_OP_DRV_OUT
 		req = blk_mq_alloc_request_hctx(q, op, flags,
 				qid ? qid - 1 : 0);
-#else
-#ifdef HAVE_BLK_MQ_ALLOC_REQUEST_HAS_3_PARAMS
+	}
+#elifdef HAVE_BLK_MQ_ALLOC_REQUEST_HAS_3_PARAMS
+	if (qid == NVME_QID_ANY) {
+		req = blk_mq_alloc_request(q, nvme_is_write(cmd), flags);
+	} else {
 		req = blk_mq_alloc_request_hctx(q, nvme_is_write(cmd), flags,
 				qid ? qid - 1 : 0);
-#else
-		// XXX We should call blk_mq_alloc_request_hctx() here.
-		req = blk_mq_alloc_request(q, nvme_is_write(cmd), gfp, reserved);
-#endif /* HAVE_BLK_MQ_ALLOC_REQUEST_HAS_3_PARAMS */
-#endif
 	}
+#else
+	if (qid == NVME_QID_ANY) {
+		req = blk_mq_alloc_request(q, nvme_is_write(cmd), gfp, reserved);
+	} else {
+		req = blk_mq_alloc_request_hctx(q, nvme_is_write(cmd), gfp,
+				qid ? qid - 1 : 0);
+	}
+#endif
+
 	if (IS_ERR(req))
 		return req;
 
