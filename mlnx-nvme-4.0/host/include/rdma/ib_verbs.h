@@ -52,6 +52,8 @@
 #include <linux/socket.h>
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,5,0))
 #include <linux/irq_poll.h>
+#else
+#include <linux/blk-iopoll.h>
 #endif
 #include <uapi/linux/if_ether.h>
 #include <net/ipv6.h>
@@ -1642,6 +1644,8 @@ struct ib_cq {
 	union {
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,5,0))
 		struct irq_poll		iop;
+#else
+		struct blk_iopoll       iop;
 #endif
 		struct work_struct	work;
 	};
