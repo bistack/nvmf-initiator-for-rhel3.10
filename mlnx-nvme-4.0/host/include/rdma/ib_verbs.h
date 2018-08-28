@@ -3355,6 +3355,7 @@ static inline int ib_post_recv(struct ib_qp *qp,
 	return qp->device->post_recv(qp, recv_wr, bad_recv_wr);
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,16,0))
 struct ib_cq *__ib_alloc_cq(struct ib_device *dev, void *private,
 			    int nr_cqe, int comp_vector,
 			    enum ib_poll_context poll_ctx, const char *caller,
@@ -3363,6 +3364,11 @@ struct ib_cq *__ib_alloc_cq(struct ib_device *dev, void *private,
 	__ib_alloc_cq((device), (priv), (nr_cqe), (comp_vect), (poll_ctx), KBUILD_MODNAME, false)
 #define ib_alloc_cq_notrack(device, priv, nr_cqe, comp_vect, poll_ctx) \
 	__ib_alloc_cq((device), (priv), (nr_cqe), (comp_vect), (poll_ctx), KBUILD_MODNAME, true)
+
+#else
+struct ib_cq *ib_alloc_cq(struct ib_device *dev, void *private,
+			  int nr_cqe, int comp_vector, enum ib_poll_context poll_ctx);
+#endif
 
 void ib_free_cq(struct ib_cq *cq);
 int ib_process_cq_direct(struct ib_cq *cq, int budget);
