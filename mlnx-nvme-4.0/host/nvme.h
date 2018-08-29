@@ -205,6 +205,7 @@ struct nvme_ctrl {
 	u64 cap;
 	u32 page_size;
 	u32 max_hw_sectors;
+	u32 max_segments;
 	u16 oncs;
 	u16 oacs;
 #ifdef HAVE_BLK_MAX_WRITE_HINTS
