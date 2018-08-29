@@ -1,0 +1,87 @@
+From 46d68bf91b270f81516cd208568522c742e81b08 Mon Sep 17 00:00:00 2001
+From: Sun Zhenyuan <sunzhenyuan@baidu.com>
+Date: Thu, 24 Aug 2017 15:03:32 +0800
+Subject: [PATCH 2/4] blk-mq: add blk_mq_alloc_request_hctx
+
+    For some protocols like NVMe over Fabrics we need to be able to send
+    initialization commands to a specific queue.
+
+    Based on an earlier patch from Christoph Hellwig <hch@lst.de>.
+
+    Signed-off-by: Ming Lin <ming.l@ssi.samsung.com>
+    [hch: disallow sleeping allocation, req_op fixes]
+    Signed-off-by: Christoph Hellwig <hch@lst.de>
+    Reviewed-by: Keith Busch <keith.busch@intel.com>
+    Signed-off-by: Jens Axboe <axboe@fb.com>
+
+https://github.com/torvalds/linux/commit/1f5bd336b9150560458b03460cbcfcfbcf8995b1
+
+Change-Id: If79515243bf143aa4bc787a3f67312e6631bb05c
+---
+ block/blk-mq.c         |   36 ++++++++++++++++++++++++++++++++++++
+ include/linux/blk-mq.h |    2 ++
+ 2 files changed, 38 insertions(+), 0 deletions(-)
+
+diff --git a/block/blk-mq.c b/block/blk-mq.c
+index 90b9c58..8e1b5f3 100644
+--- a/block/blk-mq.c
++++ b/block/blk-mq.c
+@@ -289,6 +289,42 @@ struct request *blk_mq_alloc_request(struct request_queue *q, int rw, gfp_t gfp,
+ }
+ EXPORT_SYMBOL(blk_mq_alloc_request);
+ 
++struct request *blk_mq_alloc_request_hctx(struct request_queue *q, int rw,
++					  unsigned int flags, unsigned int hctx_idx)
++{
++	struct blk_mq_hw_ctx *hctx;
++	struct blk_mq_ctx *ctx;
++	struct request *rq;
++	struct blk_mq_alloc_data alloc_data;
++	int ret;
++
++	/*
++	 * If the tag allocator sleeps we could get an allocation for a
++	 * different hardware context.  No need to complicate the low level
++	 * allocator for this for the rare use case of a command tied to
++	 * a specific queue.
++	 */
++	if (hctx_idx >= q->nr_hw_queues)
++		return ERR_PTR(-EIO);
++
++	ret = blk_mq_queue_enter(q, flags);
++	if (ret)
++		return ERR_PTR(ret);
++
++	hctx = q->queue_hw_ctx[hctx_idx];
++	ctx = __blk_mq_get_ctx(q, cpumask_first(hctx->cpumask));
++
++	blk_mq_set_alloc_data(&alloc_data, q, flags, false, ctx, hctx);
++	rq = __blk_mq_alloc_request(&alloc_data, rw);
++	if (!rq) {
++		blk_mq_queue_exit(q);
++		return ERR_PTR(-EWOULDBLOCK);
++	}
++
++	return rq;
++}
++EXPORT_SYMBOL_GPL(blk_mq_alloc_request_hctx);
++
+ static void __blk_mq_free_request(struct blk_mq_hw_ctx *hctx,
+ 				  struct blk_mq_ctx *ctx, struct request *rq)
+ {
+diff --git a/include/linux/blk-mq.h b/include/linux/blk-mq.h
+index e1980b0..8466127 100644
+--- a/include/linux/blk-mq.h
++++ b/include/linux/blk-mq.h
+@@ -224,6 +224,8 @@ void blk_mq_free_hctx_request(struct blk_mq_hw_ctx *, struct request *rq);
+ bool blk_mq_can_queue(struct blk_mq_hw_ctx *);
+ struct request *blk_mq_alloc_request(struct request_queue *q, int rw,
+ 		gfp_t gfp, bool reserved);
++struct request *blk_mq_alloc_request_hctx(struct request_queue *q, int op,
++					unsigned int flags, unsigned int hctx_idx);
+ struct request *blk_mq_tag_to_rq(struct blk_mq_tags *tags, unsigned int tag);
+ struct cpumask *blk_mq_tags_cpumask(struct blk_mq_tags *tags);
+ 
+-- 
+1.7.1
+

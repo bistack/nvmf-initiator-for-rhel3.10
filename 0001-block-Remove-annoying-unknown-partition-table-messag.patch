@@ -1,0 +1,50 @@
+From 82df48a431a7110e5a4109fb7e69651d88ceb5a1 Mon Sep 17 00:00:00 2001
+From: Sun Zhenyuan <sunzhenyuan@baidu.com>
+Date: Thu, 24 Aug 2017 14:58:20 +0800
+Subject: [PATCH 1/4] block: Remove annoying "unknown partition table" message
+
+    As Christoph put it:
+      Can we just get rid of the warnings?  It's fairly annoying as devices
+      without partitions are perfectly fine and very useful.
+
+    Me too I see this message every VM boot for ages on all my
+    devices. Would love to just remove it. For me a partition-table
+    is only needed for a booting BIOS, grub, and stuff.
+
+    CC: Christoph Hellwig <hch@infradead.org>
+    Signed-off-by: Boaz Harrosh <boaz@plexistor.com>
+    Signed-off-by: Jens Axboe <axboe@fb.com>
+
+https://github.com/torvalds/linux/commit/bb5c3cdda37aad22996d6da2addd58cadc0436c0
+
+Change-Id: Ibe70258fba2e324ee5dafd62c289106acc1301a2
+---
+ block/partitions/check.c |   12 ++++++------
+ 1 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/block/partitions/check.c b/block/partitions/check.c
+index 19ba207..a484a0c 100644
+--- a/block/partitions/check.c
++++ b/block/partitions/check.c
+@@ -180,12 +180,12 @@ check_partition(struct gendisk *hd, struct block_device *bdev)
+ 	if (err)
+ 	/* The partition is unrecognized. So report I/O errors if there were any */
+ 		res = err;
+-	if (!res)
+-		strlcat(state->pp_buf, " unknown partition table\n", PAGE_SIZE);
+-	else if (warn_no_part)
+-		strlcat(state->pp_buf, " unable to read partition table\n", PAGE_SIZE);
+-
+-	printk(KERN_INFO "%s", state->pp_buf);
++	if (res) {
++		if (warn_no_part)
++			strlcat(state->pp_buf,
++				" unable to read partition table\n", PAGE_SIZE);
++		printk(KERN_INFO "%s", state->pp_buf);
++	}
+ 
+ 	free_page((unsigned long)state->pp_buf);
+ 	free_partitions(state);
+-- 
+1.7.1
+
