@@ -137,10 +137,12 @@ struct nvme_request {
 	u16			status;
 };
 
+#ifdef CONFIG_NVME_MULTIPATH
 /*
  * Mark a bio as coming in through the mpath node.
  */
 #define REQ_NVME_MPATH		REQ_DRV
+#endif
 
 enum {
 	NVME_REQ_CANCELLED		= (1 << 0),
