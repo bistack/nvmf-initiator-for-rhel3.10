@@ -36,17 +36,9 @@
 #include <scsi/scsi.h>
 #endif
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,5,0))
 #include <rdma/ib_verbs.h>
-#else
-#include "include/rdma/ib_verbs.h"
-#endif
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,8,0))
 #include <rdma/rdma_cm.h>
-#else
-#include "include/rdma/rdma_cm.h"
-#endif
+#include <rdma/mr_pool.h>
 
 #include "nvme.h"
 #include "fabrics.h"
@@ -61,12 +53,6 @@
 #include <linux/nvme-rdma.h>
 #else
 #include "include/linux/nvme-rdma.h"
-#endif
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,7,0))
-#include <rdma/mr_pool.h>
-#else
-#include "include/rdma/mr_pool.h"
 #endif
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4,7,0)) /* sg */
