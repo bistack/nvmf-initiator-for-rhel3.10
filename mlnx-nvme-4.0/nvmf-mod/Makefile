@@ -2,8 +2,8 @@ K_VER := `uname -r`
 K_DIR := /lib/modules/$(K_VER)
 
 install:
-	rmmod nvme-rdma
-	rmmod nvme-fabrics
+	- rmmod nvme-rdma
+	- rmmod nvme-fabrics
 	insmod nvme-fabrics.ko
 	insmod nvme-rdma.ko
 	- cp $(K_DIR)/kernel/drivers/block/nvme.ko ./

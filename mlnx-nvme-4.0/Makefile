@@ -36,7 +36,7 @@ all:
 		-Iinclude/generated/uapi \
 		-include $$(srctree)/include/linux/kconfig.h \
 		'
-	mv ./host/*.ko ./nvmf_out/
+	mv ./host/*.ko ./nvmf-mod/
 
 headers:
 	- mkdir -p $(RDMA_H)
@@ -53,7 +53,7 @@ headers:
 	cp $(OFA_COMPAT_H)/config.h $(COMPAT_H)
 
 config:
-	cd $(MLNX_OFED_SRC) && ./configure --with-nvmf-host-without-fc --without-nvmf_target-mod
+	cd $(OFA) && ./configure --with-nvmf-host-without-fc --without-nvmf_target-mod
 
 clean:
 	rm -rf ./nvmf_out/* ./host*.ko ./host/*.o ./host/*.mod.c Module.symvers modules.order
