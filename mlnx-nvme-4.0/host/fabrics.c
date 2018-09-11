@@ -634,6 +634,68 @@ static struct nvmf_transport_ops *nvmf_lookup_transport(
 	return NULL;
 }
 
+/*
+ * For something we're not in a state to send to the device the default action
+ * is to busy it and retry it after the controller state is recovered.  However,
+ * if the controller is deleting or if anything is marked for failfast or
+ * nvme multipath it is immediately failed.
+ *
+ * Note: commands used to initialize the controller will be marked for failfast.
+ * Note: nvme cli/ioctl commands are marked for failfast.
+ */
+blk_status_t nvmf_fail_nonready_command(struct nvme_ctrl *ctrl,
+		struct request *rq)
+{
+	if (ctrl->state != NVME_CTRL_DELETING &&
+	    ctrl->state != NVME_CTRL_DEAD &&
+	    !blk_noretry_request(rq)
+#ifdef CONFIG_NVME_MULTIPATH
+		&& !(rq->cmd_flags & REQ_NVME_MPATH)
+#endif
+		)
+		return BLK_STS_RESOURCE;
+	nvme_req(rq)->status = NVME_SC_ABORT_REQ;
+	return BLK_STS_IOERR;
+}
+EXPORT_SYMBOL_GPL(nvmf_fail_nonready_command);
+
+bool __nvmf_check_ready(struct nvme_ctrl *ctrl, struct request *rq,
+		bool queue_live)
+{
+	struct nvme_request *req = nvme_req(rq);
+
+	/*
+	 * If we are in some state of setup or teardown only allow
+	 * internally generated commands.
+	 */
+	if (
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,12,0))
+			!blk_rq_is_passthrough(rq) ||
+#endif
+		(req->flags & NVME_REQ_USERCMD))
+		return false;
+
+	/*
+	 * Only allow commands on a live queue, except for the connect command,
+	 * which is require to set the queue live in the appropinquate states.
+	 */
+	switch (ctrl->state) {
+	case NVME_CTRL_NEW:
+	case NVME_CTRL_CONNECTING:
+		if (req->cmd->common.opcode == nvme_fabrics_command &&
+		    req->cmd->fabrics.fctype == nvme_fabrics_type_connect)
+			return true;
+		break;
+	default:
+		break;
+	case NVME_CTRL_DEAD:
+		return false;
+	}
+
+	return queue_live;
+}
+EXPORT_SYMBOL_GPL(__nvmf_check_ready);
+
 blk_status_t nvmf_check_if_ready(struct nvme_ctrl *ctrl, struct request *rq,
 		bool queue_live, bool is_connected)
 {
@@ -1062,6 +1124,7 @@ nvmf_create_ctrl(struct device *dev, const char *buf, size_t count)
 		ret = -EBUSY;
 		goto out_unlock;
 	}
+	up_read(&nvmf_transports_rwsem);
 
 	ret = nvmf_check_required_opts(opts, ops->required_opts);
 	if (ret)
@@ -1078,11 +1141,11 @@ nvmf_create_ctrl(struct device *dev, const char *buf, size_t count)
 	}
 
 	module_put(ops->module);
-	up_read(&nvmf_transports_rwsem);
 	return ctrl;
 
 out_module_put:
 	module_put(ops->module);
+	goto out_free_opts;
 out_unlock:
 	up_read(&nvmf_transports_rwsem);
 out_free_opts:
@@ -1271,9 +1334,6 @@ static void __exit nvmf_exit(void)
 }
 
 MODULE_LICENSE("GPL v2");
-#ifdef RETPOLINE_MLNX
-MODULE_INFO(retpoline, "Y");
-#endif
 
 module_init(nvmf_init);
 module_exit(nvmf_exit);
