@@ -36,6 +36,7 @@ all:
 		-Iinclude/generated/uapi \
 		-include $$(srctree)/include/linux/kconfig.h \
 		'
+	mv ./host/*.ko ./nvmf_out/
 
 headers:
 	- mkdir -p $(RDMA_H)
@@ -54,14 +55,6 @@ headers:
 config:
 	cd $(MLNX_OFED_SRC) && ./configure --with-nvmf-host-without-fc --without-nvmf_target-mod
 
-install:
-	- cp $(K_DIR)/kernel/drivers/block/nvme.ko ./
-	- rm -rf $(K_DIR)/kernel/drivers/block/nvme.ko
-	- rm -rf $(K_DIR)/extra/mlnx-nvme
-	- rm -rf $(K_DIR)/extra/mlnx-ofa_kernel/drivers/nvme
-	- mkdir -p $(K_DIR)/kernel/drivers/nvme/host/
-	- cp ./host/*.ko $(K_DIR)/kernel/drivers/nvme/host/
-	depmod $(K_VER)
 clean:
-	rm -rf ./host*.ko ./host/*.o ./host/*.mod.c Module.symvers modules.order
+	rm -rf ./nvmf_out/* ./host*.ko ./host/*.o ./host/*.mod.c Module.symvers modules.order
 endif
