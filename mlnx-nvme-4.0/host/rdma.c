@@ -452,13 +452,13 @@ nvme_rdma_find_get_device(struct rdma_cm_id *cm_id)
 
 	ndev->pd = ib_alloc_pd(ndev->dev,
 		register_always ? 0 : IB_PD_UNSAFE_GLOBAL_RKEY);
-	if (IS_ERR(ndev->pd))
+	if (!ndev->pd || IS_ERR(ndev->pd))
 		goto out_free_dev;
 
 	if (!(ndev->dev->attrs.device_cap_flags &
 	      IB_DEVICE_MEM_MGT_EXTENSIONS)) {
 		dev_err(&ndev->dev->dev,
-			"Memory registrations not supported.\n");
+			"NVME_RDMA: IB Memory registrations not supported.\n");
 		goto out_free_pd;
 	}
 
@@ -616,7 +616,7 @@ static int nvme_rdma_alloc_queue(struct nvme_rdma_ctrl *ctrl,
 
 	queue->cm_id = rdma_create_id(&init_net, nvme_rdma_cm_handler, queue,
 			RDMA_PS_TCP, IB_QPT_RC);
-	if (IS_ERR(queue->cm_id)) {
+	if (!queue->cm_id || IS_ERR(queue->cm_id)) {
 		dev_info(ctrl->ctrl.device,
 			"failed to create CM ID: %ld\n", PTR_ERR(queue->cm_id));
 		return PTR_ERR(queue->cm_id);
@@ -2201,6 +2201,11 @@ static struct nvme_ctrl *nvme_rdma_create_ctrl(struct device *dev,
 	bool changed;
 	char *port;
 
+	if (!opts || IS_ERR(opts)) {
+		printk("NVME_RDMA: %s opts is NULL\n", __func__);
+		return ERR_PTR(-EFAULT);
+	}
+
 	ctrl = kzalloc(sizeof(*ctrl), GFP_KERNEL);
 	if (!ctrl)
 		return ERR_PTR(-ENOMEM);
@@ -2378,8 +2383,10 @@ static int __init nvme_rdma_init_module(void)
 	int ret;
 
 	ret = ib_register_client(&nvme_rdma_ib_client);
-	if (ret)
+	if (ret) {
+		printk("NVME_RDMA: register nvme_rdma_ib_client failed %d\n", ret);
 		return ret;
+	}
 
 	ret = nvmf_register_transport(&nvme_rdma_transport);
 	if (ret)

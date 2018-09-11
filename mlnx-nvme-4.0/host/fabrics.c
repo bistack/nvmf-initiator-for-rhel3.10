@@ -459,6 +459,11 @@ int nvmf_connect_admin_queue(struct nvme_ctrl *ctrl)
 	struct nvmf_connect_data *data;
 	int ret;
 
+	if (!ctrl->opts || IS_ERR(ctrl->opts)) {
+		printk("NVMF: %s ctrl->opts is NULL", __func__);
+		return -EFAULT;
+	}
+
 	memset(&cmd, 0, sizeof(cmd));
 	cmd.connect.opcode = nvme_fabrics_command;
 	cmd.connect.fctype = nvme_fabrics_type_connect;
@@ -591,6 +596,7 @@ int nvmf_register_transport(struct nvmf_transport_ops *ops)
 	down_write(&nvmf_transports_rwsem);
 	list_add_tail(&ops->entry, &nvmf_transports);
 	up_write(&nvmf_transports_rwsem);
+	printk("NVMF: register transport %s\n", ops->name);
 
 	return 0;
 }

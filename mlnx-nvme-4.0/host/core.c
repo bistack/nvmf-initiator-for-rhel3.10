@@ -2617,6 +2617,11 @@ int nvme_init_identify(struct nvme_ctrl *ctrl)
 	bool prev_apst_enabled;
 #endif
 
+	if (!ctrl->ops || IS_ERR(ctrl->ops)) {
+		printk("NVME_CORE: %s ctrl->ops is NULL\n", __func__);
+		return -EFAULT;
+	}
+
 	ret = ctrl->ops->reg_read32(ctrl, NVME_REG_VS, &ctrl->vs);
 	if (ret) {
 		dev_err(ctrl->device, "Reading VS failed (%d)\n", ret);
