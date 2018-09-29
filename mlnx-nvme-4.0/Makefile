@@ -53,7 +53,7 @@ headers:
 	cp $(OFA_COMPAT_H)/config.h $(COMPAT_H)
 
 config:
-	cd $(OFA) && ./configure --with-nvmf-host-without-fc --without-nvmf_target-mod
+	cd $(OFA) && ./configure --with-nvmf-host-without-fc --without-nvmf_target-mod --kernel-sources=$(K_SRC)
 
 clean:
 	rm -rf ./nvmf_out/* ./host*.ko ./host/*.o ./host/*.mod.c Module.symvers modules.order
