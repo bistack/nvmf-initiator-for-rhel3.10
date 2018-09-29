@@ -669,8 +669,10 @@ bool __nvmf_check_ready(struct nvme_ctrl *ctrl, struct request *rq,
 	 * internally generated commands.
 	 */
 	if (
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,12,0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0))
 			!blk_rq_is_passthrough(rq) ||
+#else
+			req->cmd_type == REQ_TYPE_FS ||
 #endif
 		(req->flags & NVME_REQ_USERCMD))
 		return false;
@@ -735,11 +737,13 @@ blk_status_t nvmf_check_if_ready(struct nvme_ctrl *ctrl, struct request *rq,
 		 * commands if the controller reverted the queue to non-live.
 		 */
 		if (!queue_live &&
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,12,0))
-			blk_rq_is_passthrough(rq) &&
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0))
+		    blk_rq_is_passthrough(rq) &&
+#else
+		    req->cmd_type != REQ_TYPE_FS &&
 #endif
-		     cmd->common.opcode == nvme_fabrics_command &&
-		     cmd->fabrics.fctype == nvme_fabrics_type_connect)
+		    cmd->common.opcode == nvme_fabrics_command &&
+		    cmd->fabrics.fctype == nvme_fabrics_type_connect)
 			return BLK_STS_OK;
 		break;
 	default:
