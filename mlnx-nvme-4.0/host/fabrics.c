@@ -672,7 +672,7 @@ bool __nvmf_check_ready(struct nvme_ctrl *ctrl, struct request *rq,
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0))
 			!blk_rq_is_passthrough(rq) ||
 #else
-			req->cmd_type == REQ_TYPE_FS ||
+			rq->cmd_type == REQ_TYPE_FS ||
 #endif
 		(req->flags & NVME_REQ_USERCMD))
 		return false;
@@ -740,7 +740,7 @@ blk_status_t nvmf_check_if_ready(struct nvme_ctrl *ctrl, struct request *rq,
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0))
 		    blk_rq_is_passthrough(rq) &&
 #else
-		    req->cmd_type != REQ_TYPE_FS &&
+		    rq->cmd_type != REQ_TYPE_FS &&
 #endif
 		    cmd->common.opcode == nvme_fabrics_command &&
 		    cmd->fabrics.fctype == nvme_fabrics_type_connect)
