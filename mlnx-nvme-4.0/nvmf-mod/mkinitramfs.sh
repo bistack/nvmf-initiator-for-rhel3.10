@@ -19,6 +19,10 @@ if [ $is6u3 -eq 1 ]; then
     cp ./tmp/init.new $init_sh
 fi
 
+if [ ! -e /boot/vmlinuz-${K_VER}.bak ]; then
+    mv /boot/vmlinuz-${K_VER} /boot/vmlinuz-${K_VER}.bak
+fi
+
 K_VER=`uname -r`
 /sbin/dracut --force --add-drivers "nvme" --omit-drivers "mlx5_core mlx5_ib mlx_compat" /boot/initrd-${K_VER}.img ${K_VER}
 rm -rf /boot/initrd-${K_VER}kdump.img
