@@ -110,6 +110,27 @@ static struct class *nvme_subsys_class;
 static void nvme_ns_remove(struct nvme_ns *ns);
 static int nvme_revalidate_disk(struct gendisk *disk);
 static void nvme_put_subsystem(struct nvme_subsystem *subsys);
+static void nvme_remove_invalid_namespaces(struct nvme_ctrl *ctrl,
+					   unsigned nsid);
+
+static void nvme_set_queue_dying(struct nvme_ns *ns)
+{
+	/*
+	 * Revalidating a dead namespace sets capacity to 0. This will end
+	 * buffered writers dirtying pages that can't be synced.
+	 */
+	if (!ns->disk || test_and_set_bit(NVME_NS_DEAD, &ns->flags))
+		return;
+	revalidate_disk(ns->disk);
+	blk_set_queue_dying(ns->queue);
+	/* Forcibly unquiesce queues to avoid blocking dispatch */
+#ifdef HAVE_BLK_MQ_UNQUIESCE_QUEUE
+	blk_mq_unquiesce_queue(ns->queue);
+#else
+	blk_mq_start_stopped_hw_queues(ns->queue, true);
+#endif
+
+}
 
 static void nvme_queue_scan(struct nvme_ctrl *ctrl)
 {
@@ -452,27 +473,25 @@ struct request *nvme_alloc_request(struct request_queue *q,
 		struct nvme_command *cmd, gfp_t gfp, bool reserved, int qid)
 #endif
 {
-	struct request *req;
 #ifdef HAVE_BLK_TYPES_REQ_OP_DRV_OUT
 	unsigned op = nvme_is_write(cmd) ? REQ_OP_DRV_OUT : REQ_OP_DRV_IN;
+#else
+	unsigned op = nvme_is_write(cmd);
+#endif
+	struct request *req;
+
+#ifdef HAVE_BLK_MQ_ALLOC_REQUEST_HAS_3_PARAMS
 	if (qid == NVME_QID_ANY) {
 		req = blk_mq_alloc_request(q, op, flags);
 	} else {
 		req = blk_mq_alloc_request_hctx(q, op, flags,
 				qid ? qid - 1 : 0);
 	}
-#elifdef HAVE_BLK_MQ_ALLOC_REQUEST_HAS_3_PARAMS
-	if (qid == NVME_QID_ANY) {
-		req = blk_mq_alloc_request(q, nvme_is_write(cmd), flags);
-	} else {
-		req = blk_mq_alloc_request_hctx(q, nvme_is_write(cmd), flags,
-				qid ? qid - 1 : 0);
-	}
 #else
 	if (qid == NVME_QID_ANY) {
-		req = blk_mq_alloc_request(q, nvme_is_write(cmd), gfp, reserved);
+		req = blk_mq_alloc_request(q, op, gfp, reserved);
 	} else {
-		req = blk_mq_alloc_request_hctx(q, nvme_is_write(cmd), gfp,
+		req = blk_mq_alloc_request_hctx(q, op, gfp,
 				qid ? qid - 1 : 0);
 	}
 #endif
@@ -1256,14 +1275,17 @@ EXPORT_SYMBOL_GPL(nvme_set_queue_count);
 
 static void nvme_enable_aen(struct nvme_ctrl *ctrl)
 {
-	u32 result;
+	u32 result, supported_aens = ctrl->oaes & NVME_AEN_SUPPORTED;
 	int status;
 
-	status = nvme_set_features(ctrl, NVME_FEAT_ASYNC_EVENT,
-			ctrl->oaes & NVME_AEN_SUPPORTED, NULL, 0, &result);
+	if (!supported_aens)
+		return;
+
+	status = nvme_set_features(ctrl, NVME_FEAT_ASYNC_EVENT, supported_aens,
+			NULL, 0, &result);
 	if (status)
 		dev_warn(ctrl->device, "Failed to configure AEN (cfg %x)\n",
-			 ctrl->oaes & NVME_AEN_SUPPORTED);
+			 supported_aens);
 }
 
 static int nvme_submit_io(struct nvme_ns *ns, struct nvme_user_io __user *uio)
@@ -1363,19 +1385,15 @@ static u32 nvme_passthru_start(struct nvme_ctrl *ctrl, struct nvme_ns *ns,
 
 static void nvme_update_formats(struct nvme_ctrl *ctrl)
 {
-	struct nvme_ns *ns, *next;
-	LIST_HEAD(rm_list);
+	struct nvme_ns *ns;
 
-	down_write(&ctrl->namespaces_rwsem);
-	list_for_each_entry(ns, &ctrl->namespaces, list) {
-		if (ns->disk && nvme_revalidate_disk(ns->disk)) {
-			list_move_tail(&ns->list, &rm_list);
-		}
-	}
-	up_write(&ctrl->namespaces_rwsem);
+	down_read(&ctrl->namespaces_rwsem);
+	list_for_each_entry(ns, &ctrl->namespaces, list)
+		if (ns->disk && nvme_revalidate_disk(ns->disk))
+			nvme_set_queue_dying(ns);
+	up_read(&ctrl->namespaces_rwsem);
 
-	list_for_each_entry_safe(ns, next, &rm_list, list)
-		nvme_ns_remove(ns);
+	nvme_remove_invalid_namespaces(ctrl, NVME_NSID_ALL);
 }
 
 static void nvme_passthru_end(struct nvme_ctrl *ctrl, u32 effects)
@@ -1430,7 +1448,7 @@ static int nvme_user_cmd(struct nvme_ctrl *ctrl, struct nvme_ns *ns,
 	effects = nvme_passthru_start(ctrl, ns, cmd.opcode);
 	status = nvme_submit_user_cmd(ns ? ns->queue : ctrl->admin_q, &c,
 			(void __user *)(uintptr_t)cmd.addr, cmd.data_len,
-			(void __user *)(uintptr_t)cmd.metadata, cmd.metadata,
+			(void __user *)(uintptr_t)cmd.metadata, cmd.metadata_len,
 			0, &cmd.result, timeout);
 	nvme_passthru_end(ctrl, effects);
 
@@ -2024,14 +2042,7 @@ int nvme_enable_ctrl(struct nvme_ctrl *ctrl, u64 cap)
 	ret = ctrl->ops->reg_write32(ctrl, NVME_REG_CC, ctrl->ctrl_config);
 	if (ret)
 		return ret;
-
-	ret = nvme_wait_ready(ctrl, cap, true);
-	if (ret)
-		return ret;
-
-	nvme_start_keep_alive(ctrl);
-
-	return 0;
+	return nvme_wait_ready(ctrl, cap, true);
 }
 EXPORT_SYMBOL_GPL(nvme_enable_ctrl);
 
@@ -2765,7 +2776,6 @@ int nvme_init_identify(struct nvme_ctrl *ctrl)
 	if (ret < 0)
 		return ret;
 #endif
-
 	ret = nvme_configure_timestamp(ctrl);
 	if (ret < 0)
 		return ret;
@@ -3502,7 +3512,7 @@ static void nvme_remove_invalid_namespaces(struct nvme_ctrl *ctrl,
 
 	down_write(&ctrl->namespaces_rwsem);
 	list_for_each_entry_safe(ns, next, &ctrl->namespaces, list) {
-		if (ns->head->ns_id > nsid)
+		if (ns->head->ns_id > nsid || test_bit(NVME_NS_DEAD, &ns->flags))
 			list_move_tail(&ns->list, &rm_list);
 	}
 	up_write(&ctrl->namespaces_rwsem);
@@ -3562,40 +3572,28 @@ static void nvme_scan_ns_sequential(struct nvme_ctrl *ctrl, unsigned nn)
 	nvme_remove_invalid_namespaces(ctrl, nn);
 }
 
-static bool nvme_scan_changed_ns_log(struct nvme_ctrl *ctrl)
+static void nvme_clear_changed_ns_log(struct nvme_ctrl *ctrl)
 {
 	size_t log_size = NVME_MAX_CHANGED_NAMESPACES * sizeof(__le32);
 	__le32 *log;
-	int error, i;
-	bool ret = false;
+	int error;
 
 	log = kzalloc(log_size, GFP_KERNEL);
 	if (!log)
-		return false;
+		return;
 
+	/*
+	 * We need to read the log to clear the AEN, but we don't want to rely
+	 * on it for the changed namespace information as userspace could have
+	 * raced with us in reading the log page, which could cause us to miss
+	 * updates.
+	 */
 	error = nvme_get_log(ctrl, NVME_LOG_CHANGED_NS, log, log_size);
-	if (error) {
+	if (error)
 		dev_warn(ctrl->device,
 			"reading changed ns log failed: %d\n", error);
-		goto out_free_log;
-	}
 
-	if (log[0] == cpu_to_le32(0xffffffff))
-		goto out_free_log;
-
-	for (i = 0; i < NVME_MAX_CHANGED_NAMESPACES; i++) {
-		u32 nsid = le32_to_cpu(log[i]);
-
-		if (nsid == 0)
-			break;
-		dev_info(ctrl->device, "rescanning namespace %d.\n", nsid);
-		nvme_validate_ns(ctrl, nsid);
-	}
-	ret = true;
-
-out_free_log:
 	kfree(log);
-	return ret;
 }
 
 static void nvme_scan_work(struct work_struct *work)
@@ -3610,10 +3608,9 @@ static void nvme_scan_work(struct work_struct *work)
 
 	WARN_ON_ONCE(!ctrl->tagset);
 
-	if (test_and_clear_bit(EVENT_NS_CHANGED, &ctrl->events)) {
-		if (nvme_scan_changed_ns_log(ctrl))
-			goto out_sort_namespaces;
+	if (test_and_clear_bit(NVME_AER_NOTICE_NS_CHANGED, &ctrl->events)) {
 		dev_info(ctrl->device, "rescanning namespaces.\n");
+		nvme_clear_changed_ns_log(ctrl);
 	}
 
 	if (nvme_identify_ctrl(ctrl, &id))
@@ -3628,7 +3625,6 @@ static void nvme_scan_work(struct work_struct *work)
 	nvme_scan_ns_sequential(ctrl, nn);
 out_free_id:
 	kfree(id);
-out_sort_namespaces:
 	down_write(&ctrl->namespaces_rwsem);
 	list_sort(NULL, &ctrl->namespaces, ns_cmp);
 	up_write(&ctrl->namespaces_rwsem);
@@ -3751,7 +3747,7 @@ static void nvme_handle_aen_notice(struct nvme_ctrl *ctrl, u32 result)
 {
 	switch ((result & 0xff00) >> 8) {
 	case NVME_AER_NOTICE_NS_CHANGED:
-		set_bit(EVENT_NS_CHANGED, &ctrl->events);
+		set_bit(NVME_AER_NOTICE_NS_CHANGED, &ctrl->events);
 		nvme_queue_scan(ctrl);
 		break;
 	case NVME_AER_NOTICE_FW_ACT_STARTING:
@@ -3800,6 +3796,9 @@ EXPORT_SYMBOL_GPL(nvme_stop_ctrl);
 
 void nvme_start_ctrl(struct nvme_ctrl *ctrl)
 {
+	if (ctrl->kato)
+		nvme_start_keep_alive(ctrl);
+
 	if (ctrl->queue_count > 1) {
 		nvme_queue_scan(ctrl);
 		nvme_enable_aen(ctrl);
@@ -4008,23 +4007,8 @@ void nvme_kill_queues(struct nvme_ctrl *ctrl)
 		blk_mq_start_stopped_hw_queues(ctrl->admin_q, true);
 #endif
 
-	list_for_each_entry(ns, &ctrl->namespaces, list) {
-		/*
-		 * Revalidating a dead namespace sets capacity to 0. This will
-		 * end buffered writers dirtying pages that can't be synced.
-		 */
-		if (!ns->disk || test_and_set_bit(NVME_NS_DEAD, &ns->flags))
-			continue;
-		revalidate_disk(ns->disk);
-		blk_set_queue_dying(ns->queue);
-
-		/* Forcibly unquiesce queues to avoid blocking dispatch */
-#ifdef HAVE_BLK_MQ_UNQUIESCE_QUEUE
-		blk_mq_unquiesce_queue(ns->queue);
-#else
-		blk_mq_start_stopped_hw_queues(ns->queue, true);
-#endif
-	}
+	list_for_each_entry(ns, &ctrl->namespaces, list)
+		nvme_set_queue_dying(ns);
 	up_read(&ctrl->namespaces_rwsem);
 }
 EXPORT_SYMBOL_GPL(nvme_kill_queues);
@@ -4216,9 +4200,6 @@ void nvme_core_exit(void)
 }
 
 MODULE_LICENSE("GPL");
-#ifdef RETPOLINE_MLNX
-MODULE_INFO(retpoline, "Y");
-#endif
 MODULE_VERSION("1.0");
 module_init(nvme_core_init);
 module_exit(nvme_core_exit);
