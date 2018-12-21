@@ -1,9 +1,10 @@
-OFA := ../../mlnx-ofa_kernel-4.3
-K_VER := `uname -r`
-
 ifneq ($(KERNELRELEASE),)
 obj-y		+= host/
 else
+
+OFA := /noah/mlnx-ofa_kernel-4.3
+K_VER := `uname -r`
+K_SRC := /lib/modules/$(K_VER)/build
 
 OFA_RDMA_H := $(OFA)/include/rdma
 OFA_COMPAT_H := $(OFA)/compat
@@ -12,13 +13,11 @@ HDIR := $(PWD)/host
 RDMA_H := $(HDIR)/include/rdma
 COMPAT_H := $(HDIR)/compat
 
-K_DIR := /lib/modules/$(K_VER)
-K_SRC := $(K_DIR)/build
+#	CONFIG_NVME_CORE=m	\
+#	CONFIG_BLK_DEV_NVME=m	\
 
 all:
 	make -C $(K_SRC) M=$(PWD) modules \
-	CONFIG_NVME_CORE=m	\
-	CONFIG_BLK_DEV_NVME=m	\
 	CONFIG_NVME_FABRICS=m	\
 	CONFIG_NVME_RDMA=m	\
 	DEBUG=	\

@@ -1288,9 +1288,16 @@ static int __init nvmf_init(void)
 {
 	int ret;
 
+	ret = nvme_core_init();
+	if (ret != 0) {
+		return ret;
+	}
+
 	nvmf_default_host = nvmf_host_default();
-	if (!nvmf_default_host)
-		return -ENOMEM;
+	if (!nvmf_default_host) {
+		ret = -ENOMEM;
+		goto out_exit_nvme_core;
+	}
 
 	nvmf_class = class_create(THIS_MODULE, "nvme-fabrics");
 	if (IS_ERR(nvmf_class)) {
@@ -1321,6 +1328,8 @@ out_destroy_class:
 	class_destroy(nvmf_class);
 out_free_host:
 	nvmf_host_put(nvmf_default_host);
+out_exit_nvme_core:
+	nvme_core_exit();
 	return ret;
 }
 
@@ -1335,6 +1344,8 @@ static void __exit nvmf_exit(void)
 	BUILD_BUG_ON(sizeof(struct nvmf_property_get_command) != 64);
 	BUILD_BUG_ON(sizeof(struct nvmf_property_set_command) != 64);
 	BUILD_BUG_ON(sizeof(struct nvmf_connect_data) != 1024);
+
+	nvme_core_exit();
 }
 
 MODULE_LICENSE("GPL v2");

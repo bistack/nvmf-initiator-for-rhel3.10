@@ -1,34 +1,9 @@
-config NVME_CORE
-	tristate
-
-config BLK_DEV_NVME
-	tristate "NVM Express block device"
-	depends on PCI && BLOCK
-	select NVME_CORE
-	---help---
-	  The NVM Express driver is for solid state drives directly
-	  connected to the PCI or PCI Express bus.  If you know you
-	  don't have one of these, it is safe to answer N.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called nvme.
-
-config NVME_MULTIPATH
-	bool "NVMe multipath support"
-	depends on NVME_CORE
-	---help---
-	   This option enables support for multipath access to NVMe
-	   subsystems.  If this option is enabled only a single
-	   /dev/nvmeXnY device will show up for each NVMe namespaces,
-	   even if it is accessible through multiple controllers.
-
 config NVME_FABRICS
-	tristate
+	tristate "NVM Express over Fabrics host driver"
 
 config NVME_RDMA
 	tristate "NVM Express over Fabrics RDMA host driver"
 	depends on INFINIBAND && BLOCK
-	select NVME_CORE
 	select NVME_FABRICS
 	select SG_POOL
 	help

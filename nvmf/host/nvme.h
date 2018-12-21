@@ -49,11 +49,11 @@ struct t10_pi_tuple {
 #include <linux/t10-pi.h>
 #endif	/* t10-pi */
 
-extern unsigned int nvme_io_timeout;
-#define NVME_IO_TIMEOUT	(nvme_io_timeout * HZ)
+extern unsigned int nvmf_io_timeout;
+#define NVME_IO_TIMEOUT	(nvmf_io_timeout * HZ)
 
-extern unsigned int admin_timeout;
-#define ADMIN_TIMEOUT	(admin_timeout * HZ)
+extern unsigned int nvmf_admin_timeout;
+#define ADMIN_TIMEOUT	(nvmf_admin_timeout * HZ)
 
 #define NVME_DEFAULT_KATO	5
 #define NVME_KATO_GRACE		10
@@ -594,7 +594,7 @@ static inline void nvme_mpath_check_last_path(struct nvme_ns *ns)
 static inline void nvme_set_disk_name(char *disk_name, struct nvme_ns *ns,
 				      struct nvme_ctrl *ctrl, int *flags)
 {
-	sprintf(disk_name, "nvme%dn%d", ctrl->instance, ns->head->instance);
+	sprintf(disk_name, "nvmf%dn%d", ctrl->instance, ns->head->instance);
 }
 
 static inline void nvme_failover_req(struct request *req)

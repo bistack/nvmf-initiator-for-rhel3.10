@@ -43,15 +43,15 @@
 
 #define NVME_MINORS		(1U << MINORBITS)
 
-unsigned int admin_timeout = 60;
-module_param(admin_timeout, uint, 0644);
-MODULE_PARM_DESC(admin_timeout, "timeout in seconds for admin commands");
-EXPORT_SYMBOL_GPL(admin_timeout);
+unsigned int nvmf_admin_timeout = 60;
+module_param(nvmf_admin_timeout, uint, 0644);
+MODULE_PARM_DESC(nvmf_admin_timeout, "timeout in seconds for admin commands");
+EXPORT_SYMBOL_GPL(nvmf_admin_timeout);
 
-unsigned int nvme_io_timeout = 30;
-module_param_named(io_timeout, nvme_io_timeout, uint, 0644);
+unsigned int nvmf_io_timeout = 30;
+module_param_named(io_timeout, nvmf_io_timeout, uint, 0644);
 MODULE_PARM_DESC(io_timeout, "timeout in seconds for I/O");
-EXPORT_SYMBOL_GPL(nvme_io_timeout);
+EXPORT_SYMBOL_GPL(nvmf_io_timeout);
 
 static unsigned char shutdown_timeout = 5;
 module_param(shutdown_timeout, byte, 0644);
@@ -93,7 +93,6 @@ struct workqueue_struct *nvme_wq;
 EXPORT_SYMBOL_GPL(nvme_wq);
 
 struct workqueue_struct *nvme_reset_wq;
-EXPORT_SYMBOL_GPL(nvme_reset_wq);
 
 struct workqueue_struct *nvme_delete_wq;
 EXPORT_SYMBOL_GPL(nvme_delete_wq);
@@ -149,7 +148,6 @@ int nvme_reset_ctrl(struct nvme_ctrl *ctrl)
 		return -EBUSY;
 	return 0;
 }
-EXPORT_SYMBOL_GPL(nvme_reset_ctrl);
 
 int nvme_reset_ctrl_sync(struct nvme_ctrl *ctrl)
 {
@@ -165,7 +163,6 @@ int nvme_reset_ctrl_sync(struct nvme_ctrl *ctrl)
 
 	return ret;
 }
-EXPORT_SYMBOL_GPL(nvme_reset_ctrl_sync);
 
 static void nvme_delete_ctrl_work(struct work_struct *work)
 {
@@ -208,7 +205,6 @@ int nvme_delete_ctrl_sync(struct nvme_ctrl *ctrl)
 	nvme_put_ctrl(ctrl);
 	return ret;
 }
-EXPORT_SYMBOL_GPL(nvme_delete_ctrl_sync);
 
 static inline bool nvme_ns_has_pi(struct nvme_ns *ns)
 {
@@ -513,7 +509,6 @@ struct request *nvme_alloc_request(struct request_queue *q,
 
 	return req;
 }
-EXPORT_SYMBOL_GPL(nvme_alloc_request);
 
 #ifdef HAVE_BLK_MAX_WRITE_HINTS
 static int nvme_toggle_streams(struct nvme_ctrl *ctrl, bool enable)
@@ -881,7 +876,6 @@ int __nvme_submit_sync_cmd(struct request_queue *q, struct nvme_command *cmd,
 	blk_mq_free_request(req);
 	return ret;
 }
-EXPORT_SYMBOL_GPL(__nvme_submit_sync_cmd);
 
 int nvme_submit_sync_cmd(struct request_queue *q, struct nvme_command *cmd,
 		void *buffer, unsigned bufflen)
@@ -894,7 +888,6 @@ int nvme_submit_sync_cmd(struct request_queue *q, struct nvme_command *cmd,
 			NVME_QID_ANY, 0, GFP_KERNEL, false);
 #endif
 }
-EXPORT_SYMBOL_GPL(nvme_submit_sync_cmd);
 
 static void *nvme_add_user_metadata(struct bio *bio, void __user *ubuf,
 		unsigned len, u32 seed, bool write)
@@ -1920,7 +1913,7 @@ int nvme_sec_submit(void *data, u16 spsp, u8 secp, void *buffer, size_t len,
 				      ADMIN_TIMEOUT, NVME_QID_ANY, 1, GFP_KERNEL, false);
 #endif
 }
-EXPORT_SYMBOL_GPL(nvme_sec_submit);
+
 #endif /* CONFIG_BLK_SED_OPAL */
 #endif /* HAVE_LINUX_SED_OPAL_H */
 
@@ -2509,7 +2502,7 @@ static int nvme_init_subsystem(struct nvme_ctrl *ctrl, struct nvme_id_ctrl *id)
 	subsys->dev.class = nvme_subsys_class;
 	subsys->dev.release = nvme_release_subsystem;
 	subsys->dev.groups = nvme_subsys_attrs_groups;
-	dev_set_name(&subsys->dev, "nvme-subsys%d", subsys->instance);
+	dev_set_name(&subsys->dev, "nvmf-subsys%d", subsys->instance);
 	device_initialize(&subsys->dev);
 
 	mutex_lock(&nvme_subsystems_lock);
@@ -3656,7 +3649,6 @@ void nvme_remove_namespaces(struct nvme_ctrl *ctrl)
 	list_for_each_entry_safe(ns, next, &ns_list, list)
 		nvme_ns_remove(ns);
 }
-EXPORT_SYMBOL_GPL(nvme_remove_namespaces);
 
 static void nvme_aen_uevent(struct nvme_ctrl *ctrl)
 {
@@ -3722,7 +3714,7 @@ static void nvme_fw_act_work(struct work_struct *work)
 				msecs_to_jiffies(ctrl->mtfa * 100);
 	else
 		fw_act_timeout = jiffies +
-				msecs_to_jiffies(admin_timeout * 1000);
+				msecs_to_jiffies(nvmf_admin_timeout * 1000);
 
 	nvme_stop_queues(ctrl);
 	while (nvme_ctrl_pp_status(ctrl)) {
@@ -3954,7 +3946,7 @@ int nvme_init_ctrl(struct nvme_ctrl *ctrl, struct device *dev,
 	ctrl->device->groups = nvme_dev_attr_groups;
 	ctrl->device->release = nvme_free_ctrl;
 	dev_set_drvdata(ctrl->device, ctrl);
-	ret = dev_set_name(ctrl->device, "nvme%d", ctrl->instance);
+	ret = dev_set_name(ctrl->device, "nvmf%d", ctrl->instance);
 	if (ret)
 		goto out_release_instance;
 
@@ -4011,7 +4003,6 @@ void nvme_kill_queues(struct nvme_ctrl *ctrl)
 		nvme_set_queue_dying(ns);
 	up_read(&ctrl->namespaces_rwsem);
 }
-EXPORT_SYMBOL_GPL(nvme_kill_queues);
 
 void nvme_unfreeze(struct nvme_ctrl *ctrl)
 {
@@ -4022,7 +4013,6 @@ void nvme_unfreeze(struct nvme_ctrl *ctrl)
 		blk_mq_unfreeze_queue(ns->queue);
 	up_read(&ctrl->namespaces_rwsem);
 }
-EXPORT_SYMBOL_GPL(nvme_unfreeze);
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4,11,0)) /* blk_mq_freeze */
 // block/blk-mq.c
@@ -4052,7 +4042,6 @@ void nvme_wait_freeze_timeout(struct nvme_ctrl *ctrl, long timeout)
 	}
 	up_read(&ctrl->namespaces_rwsem);
 }
-EXPORT_SYMBOL_GPL(nvme_wait_freeze_timeout);
 
 void nvme_wait_freeze(struct nvme_ctrl *ctrl)
 {
@@ -4063,7 +4052,6 @@ void nvme_wait_freeze(struct nvme_ctrl *ctrl)
 		blk_mq_freeze_queue_wait(ns->queue);
 	up_read(&ctrl->namespaces_rwsem);
 }
-EXPORT_SYMBOL_GPL(nvme_wait_freeze);
 
 void nvme_start_freeze(struct nvme_ctrl *ctrl)
 {
@@ -4078,7 +4066,6 @@ void nvme_start_freeze(struct nvme_ctrl *ctrl)
 #endif
 	up_read(&ctrl->namespaces_rwsem);
 }
-EXPORT_SYMBOL_GPL(nvme_start_freeze);
 
 void nvme_stop_queues(struct nvme_ctrl *ctrl)
 {
@@ -4126,7 +4113,6 @@ int nvme_reinit_tagset(struct nvme_ctrl *ctrl, struct blk_mq_tag_set *set)
 	return blk_mq_reinit_tagset(set, ctrl->ops->reinit_request);
 #endif
 }
-EXPORT_SYMBOL_GPL(nvme_reinit_tagset);
 #endif
 
 bool disk_is_nvme(struct gendisk *disk)
@@ -4136,38 +4122,37 @@ bool disk_is_nvme(struct gendisk *disk)
 
 	return disk_to_dev(disk)->parent->class == nvme_class;
 }
-EXPORT_SYMBOL_GPL(disk_is_nvme);
 
-int __init nvme_core_init(void)
+int nvme_core_init(void)
 {
 	int result = -ENOMEM;
 
-	nvme_wq = alloc_workqueue("nvme-wq",
+	nvme_wq = alloc_workqueue("nvmf-wq",
 			WQ_UNBOUND | WQ_MEM_RECLAIM | WQ_SYSFS, 0);
 	if (!nvme_wq)
 		goto out;
 
-	nvme_reset_wq = alloc_workqueue("nvme-reset-wq",
+	nvme_reset_wq = alloc_workqueue("nvmf-reset-wq",
 			WQ_UNBOUND | WQ_MEM_RECLAIM | WQ_SYSFS, 0);
 	if (!nvme_reset_wq)
 		goto destroy_wq;
 
-	nvme_delete_wq = alloc_workqueue("nvme-delete-wq",
+	nvme_delete_wq = alloc_workqueue("nvmf-delete-wq",
 			WQ_UNBOUND | WQ_MEM_RECLAIM | WQ_SYSFS, 0);
 	if (!nvme_delete_wq)
 		goto destroy_reset_wq;
 
-	result = alloc_chrdev_region(&nvme_chr_devt, 0, NVME_MINORS, "nvme");
+	result = alloc_chrdev_region(&nvme_chr_devt, 0, NVME_MINORS, "nvmf");
 	if (result < 0)
 		goto destroy_delete_wq;
 
-	nvme_class = class_create(THIS_MODULE, "nvme");
+	nvme_class = class_create(THIS_MODULE, "nvmf");
 	if (IS_ERR(nvme_class)) {
 		result = PTR_ERR(nvme_class);
 		goto unregister_chrdev;
 	}
 
-	nvme_subsys_class = class_create(THIS_MODULE, "nvme-subsystem");
+	nvme_subsys_class = class_create(THIS_MODULE, "nvmf-subsystem");
 	if (IS_ERR(nvme_subsys_class)) {
 		result = PTR_ERR(nvme_subsys_class);
 		goto destroy_class;
@@ -4198,8 +4183,3 @@ void nvme_core_exit(void)
 	destroy_workqueue(nvme_reset_wq);
 	destroy_workqueue(nvme_wq);
 }
-
-MODULE_LICENSE("GPL");
-MODULE_VERSION("1.0");
-module_init(nvme_core_init);
-module_exit(nvme_core_exit);
