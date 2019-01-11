@@ -1709,9 +1709,18 @@ static int nvme_rdma_cm_handler(struct rdma_cm_id *cm_id,
 	struct nvme_rdma_queue *queue = cm_id->context;
 	int cm_error = 0;
 
-	dev_dbg(queue->ctrl->ctrl.device, "%s (%d): status %d id %p\n",
-		rdma_event_msg(ev->event), ev->event,
-		ev->status, cm_id);
+	if (queue == NULL || IS_ERR(queue)) {
+		pr_err("empty queue. %s (%d): status %d id %p\n",
+			rdma_event_msg(ev->event), ev->event,
+			ev->status, cm_id);
+		return -EFAULT;
+	}
+
+	if (queue->ctrl != NULL && !IS_ERR(queue->ctrl)) {
+		dev_dbg(queue->ctrl->ctrl.device, "%s (%d): status %d id %p\n",
+			rdma_event_msg(ev->event), ev->event,
+			ev->status, cm_id);
+	}
 
 	switch (ev->event) {
 	case RDMA_CM_EVENT_ADDR_RESOLVED:
@@ -1734,24 +1743,38 @@ static int nvme_rdma_cm_handler(struct rdma_cm_id *cm_id,
 	case RDMA_CM_EVENT_UNREACHABLE:
 		nvme_rdma_destroy_queue_ib(queue);
 	case RDMA_CM_EVENT_ADDR_ERROR:
-		dev_dbg(queue->ctrl->ctrl.device,
-			"CM error event %d\n", ev->event);
+		if (queue->ctrl != NULL && !IS_ERR(queue->ctrl)) {
+			dev_dbg(queue->ctrl->ctrl.device,
+				"CM error event %d\n", ev->event);
+		} else {
+			pr_debug("empty ctrl. CM error event %d\n", ev->event);
+		}
 		cm_error = -ECONNRESET;
 		break;
 	case RDMA_CM_EVENT_DISCONNECTED:
 	case RDMA_CM_EVENT_ADDR_CHANGE:
 	case RDMA_CM_EVENT_TIMEWAIT_EXIT:
-		dev_dbg(queue->ctrl->ctrl.device,
-			"disconnect received - connection closed\n");
-		nvme_rdma_error_recovery(queue->ctrl);
+		if (queue->ctrl != NULL && !IS_ERR(queue->ctrl)) {
+			dev_dbg(queue->ctrl->ctrl.device,
+				"disconnect received - connection closed\n");
+			nvme_rdma_error_recovery(queue->ctrl);
+		} else {
+			pr_err(	"empty ctrl. can not disconnect\n");
+			cm_error = -EFAULT;
+		}
 		break;
 	case RDMA_CM_EVENT_DEVICE_REMOVAL:
 		/* device removal is handled via the ib_client API */
 		break;
 	default:
-		dev_err(queue->ctrl->ctrl.device,
-			"Unexpected RDMA CM event (%d)\n", ev->event);
-		nvme_rdma_error_recovery(queue->ctrl);
+		if (queue->ctrl != NULL && !IS_ERR(queue->ctrl)) {
+			dev_err(queue->ctrl->ctrl.device,
+				"Unexpected RDMA CM event (%d)\n", ev->event);
+			nvme_rdma_error_recovery(queue->ctrl);
+		} else {
+			pr_err("empty ctrl. Unexpected RDMA CM event (%d)\n", ev->event);
+			cm_error = -EFAULT;
+		}
 		break;
 	}
 
@@ -2176,7 +2199,7 @@ static struct nvme_ctrl *nvme_rdma_create_ctrl(struct device *dev,
 	char *port;
 
 	if (!opts || IS_ERR(opts)) {
-		printk("NVME_RDMA: %s opts is NULL\n", __func__);
+		pr_err("NVME_RDMA: %s opts is NULL\n", __func__);
 		return ERR_PTR(-EFAULT);
 	}
 
@@ -2314,7 +2337,7 @@ static int __init nvme_rdma_init_module(void)
 
 	ret = ib_register_client(&nvme_rdma_ib_client);
 	if (ret) {
-		printk("NVME_RDMA: register nvme_rdma_ib_client failed %d\n", ret);
+		pr_info("NVME_RDMA: register nvme_rdma_ib_client failed %d\n", ret);
 		return ret;
 	}
 
