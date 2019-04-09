@@ -280,7 +280,7 @@ void nvmf_complete_rq(struct request *req)
 {
 	blk_status_t status = nvme_error_status(req);
 
-	trace_nvmf_complete_rq(req);
+	trace_nvmf_complete_req(req);
 
 	if (unlikely(status != BLK_STS_OK && nvme_req_needs_retry(req))) {
 		if (nvme_req_needs_failover(req, status)) {
@@ -840,9 +840,9 @@ blk_status_t nvmf_setup_cmd(struct nvme_ns *ns, struct request *req,
 
 	cmd->common.command_id = req->tag;
 	if (ns)
-		trace_nvme_setup_nvm_cmd(req->q->id, cmd);
+		trace_nvmf_setup_nvm_cmd(req->q->id, cmd);
 	else
-		trace_nvme_setup_admin_cmd(cmd);
+		trace_nvmf_setup_admin_cmd(cmd);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(nvmf_setup_cmd);

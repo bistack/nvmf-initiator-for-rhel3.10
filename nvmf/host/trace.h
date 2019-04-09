@@ -99,7 +99,7 @@ const char *nvme_trace_parse_nvm_cmd(struct trace_seq *p, u8 opcode,
 #define __parse_nvme_cmd(opcode, cdw10) \
 	nvme_trace_parse_nvm_cmd(p, opcode, cdw10)
 
-TRACE_EVENT(nvme_setup_admin_cmd,
+TRACE_EVENT(nvmf_setup_admin_cmd,
 	    TP_PROTO(struct nvme_command *cmd),
 	    TP_ARGS(cmd),
 	    TP_STRUCT__entry(
@@ -124,7 +124,7 @@ TRACE_EVENT(nvme_setup_admin_cmd,
 );
 
 
-TRACE_EVENT(nvme_setup_nvm_cmd,
+TRACE_EVENT(nvmf_setup_nvm_cmd,
 	    TP_PROTO(int qid, struct nvme_command *cmd),
 	    TP_ARGS(qid, cmd),
 	    TP_STRUCT__entry(
@@ -153,7 +153,7 @@ TRACE_EVENT(nvme_setup_nvm_cmd,
 		      __parse_nvme_cmd(__entry->opcode, __entry->cdw10))
 );
 
-TRACE_EVENT(nvmf_complete_rq,
+TRACE_EVENT(nvmf_complete_req,
 	    TP_PROTO(struct request *req),
 	    TP_ARGS(req),
 	    TP_STRUCT__entry(
