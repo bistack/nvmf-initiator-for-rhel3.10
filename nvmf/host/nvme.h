@@ -474,20 +474,24 @@ static inline void nvme_put_ctrl(struct nvme_ctrl *ctrl)
 	put_device(ctrl->device);
 }
 
-void nvme_complete_rq(struct request *req);
-void nvme_cancel_request(struct request *req, void *data, bool reserved);
-bool nvme_change_ctrl_state(struct nvme_ctrl *ctrl,
+void nvmf_queue_reconnect(struct nvme_ctrl *ctrl, struct delayed_work *reconnect_work);
+void nvmf_queue_error_recovery(struct work_struct *err_work);
+void nvmf_flush_delete_queue(void);
+
+void nvmf_complete_rq(struct request *req);
+void nvmf_cancel_request(struct request *req, void *data, bool reserved);
+bool nvmf_change_ctrl_state(struct nvme_ctrl *ctrl,
 		enum nvme_ctrl_state new_state);
-int nvme_disable_ctrl(struct nvme_ctrl *ctrl, u64 cap);
-int nvme_enable_ctrl(struct nvme_ctrl *ctrl, u64 cap);
-int nvme_shutdown_ctrl(struct nvme_ctrl *ctrl);
-int nvme_init_ctrl(struct nvme_ctrl *ctrl, struct device *dev,
+int nvmf_disable_ctrl(struct nvme_ctrl *ctrl, u64 cap);
+int nvmf_enable_ctrl(struct nvme_ctrl *ctrl, u64 cap);
+int nvmf_shutdown_ctrl(struct nvme_ctrl *ctrl);
+int nvmf_init_ctrl(struct nvme_ctrl *ctrl, struct device *dev,
 		const struct nvme_ctrl_ops *ops, unsigned long quirks);
-void nvme_uninit_ctrl(struct nvme_ctrl *ctrl);
-void nvme_start_ctrl(struct nvme_ctrl *ctrl);
-void nvme_stop_ctrl(struct nvme_ctrl *ctrl);
+void nvmf_uninit_ctrl(struct nvme_ctrl *ctrl);
+void nvmf_start_ctrl(struct nvme_ctrl *ctrl);
+void nvmf_stop_ctrl(struct nvme_ctrl *ctrl);
 void nvme_put_ctrl(struct nvme_ctrl *ctrl);
-int nvme_init_identify(struct nvme_ctrl *ctrl);
+int nvmf_init_identify(struct nvme_ctrl *ctrl);
 
 void nvme_remove_namespaces(struct nvme_ctrl *ctrl);
 
@@ -496,11 +500,11 @@ int nvme_sec_submit(void *data, u16 spsp, u8 secp, void *buffer, size_t len,
 		bool send);
 #endif
 
-void nvme_complete_async_event(struct nvme_ctrl *ctrl, __le16 status,
+void nvmf_complete_async_event(struct nvme_ctrl *ctrl, __le16 status,
 		volatile union nvme_result *res);
 
-void nvme_stop_queues(struct nvme_ctrl *ctrl);
-void nvme_start_queues(struct nvme_ctrl *ctrl);
+void nvmf_stop_queues(struct nvme_ctrl *ctrl);
+void nvmf_start_queues(struct nvme_ctrl *ctrl);
 void nvme_kill_queues(struct nvme_ctrl *ctrl);
 void nvme_unfreeze(struct nvme_ctrl *ctrl);
 void nvme_wait_freeze(struct nvme_ctrl *ctrl);
@@ -532,7 +536,7 @@ typedef u8 __bitwise blk_status_t;
 #define BLK_STS_IOERR		((__force blk_status_t)10)
 #endif	/* blk_status_t */
 
-blk_status_t nvme_setup_cmd(struct nvme_ns *ns, struct request *req,
+blk_status_t nvmf_setup_cmd(struct nvme_ns *ns, struct request *req,
 		struct nvme_command *cmd);
 int nvme_submit_sync_cmd(struct request_queue *q, struct nvme_command *cmd,
 		void *buf, unsigned bufflen);
@@ -546,11 +550,11 @@ int __nvme_submit_sync_cmd(struct request_queue *q, struct nvme_command *cmd,
 		union nvme_result *result, void *buffer, unsigned bufflen,
 		unsigned timeout, int qid, int at_head, gfp_t gfp, bool reserved);
 #endif
-int nvme_set_queue_count(struct nvme_ctrl *ctrl, int *count);
-void nvme_stop_keep_alive(struct nvme_ctrl *ctrl);
+int nvmf_set_queue_count(struct nvme_ctrl *ctrl, int *count);
+void nvmf_stop_keep_alive(struct nvme_ctrl *ctrl);
 int nvme_reset_ctrl(struct nvme_ctrl *ctrl);
 int nvme_reset_ctrl_sync(struct nvme_ctrl *ctrl);
-int nvme_delete_ctrl(struct nvme_ctrl *ctrl);
+int nvmf_delete_ctrl(struct nvme_ctrl *ctrl);
 int nvme_delete_ctrl_sync(struct nvme_ctrl *ctrl);
 
 int nvme_get_log_ext(struct nvme_ctrl *ctrl, struct nvme_ns *ns,

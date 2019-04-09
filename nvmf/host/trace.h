@@ -153,7 +153,7 @@ TRACE_EVENT(nvme_setup_nvm_cmd,
 		      __parse_nvme_cmd(__entry->opcode, __entry->cdw10))
 );
 
-TRACE_EVENT(nvme_complete_rq,
+TRACE_EVENT(nvmf_complete_rq,
 	    TP_PROTO(struct request *req),
 	    TP_ARGS(req),
 	    TP_STRUCT__entry(
