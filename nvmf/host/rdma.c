@@ -214,8 +214,13 @@ static void nvme_rdma_free_qe(struct ib_device *ibdev, struct nvme_rdma_qe *qe,
 static int nvme_rdma_alloc_qe(struct ib_device *ibdev, struct nvme_rdma_qe *qe,
 		size_t capsule_size, enum dma_data_direction dir)
 {
+	if (!qe || IS_ERR(qe)) {
+		pr_err("nvme_rdma_qe is NULL");
+		return -EINVAL;
+	}
+
 	qe->data = kzalloc(capsule_size, GFP_KERNEL);
-	if (!qe->data)
+	if (!qe->data || IS_ERR(qe->data))
 		return -ENOMEM;
 
 	qe->dma = ib_dma_map_single(ibdev, qe->data, capsule_size, dir);
@@ -246,7 +251,7 @@ static struct nvme_rdma_qe *nvme_rdma_alloc_ring(struct ib_device *ibdev,
 	int i;
 
 	ring = kcalloc(ib_queue_size, sizeof(struct nvme_rdma_qe), GFP_KERNEL);
-	if (!ring)
+	if (!ring || IS_ERR(ring))
 		return NULL;
 
 	for (i = 0; i < ib_queue_size; i++) {
