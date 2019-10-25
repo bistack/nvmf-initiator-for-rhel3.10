@@ -1118,7 +1118,7 @@ nvmf_create_ctrl(struct device *dev, const char *buf, size_t count)
 	down_read(&nvmf_transports_rwsem);
 	ops = nvmf_lookup_transport(opts);
 	if (!ops) {
-		pr_info("no handler found for transport %s.\n",
+		pr_err("no handler found for transport %s.\n",
 			opts->transport);
 		ret = -EINVAL;
 		goto out_unlock;

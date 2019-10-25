@@ -821,8 +821,10 @@ static void nvme_rdma_destroy_admin_queue(struct nvme_rdma_ctrl *ctrl,
 		bool remove)
 {
 	if (remove) {
-		blk_cleanup_queue(ctrl->ctrl.admin_q);
-		nvme_rdma_free_tagset(&ctrl->ctrl, ctrl->ctrl.admin_tagset);
+		if (ctrl->ctrl.admin_q && !IS_ERR(ctrl->ctrl.admin_q))
+			blk_cleanup_queue(ctrl->ctrl.admin_q);
+		if (ctrl->ctrl.admin_tagset && !IS_ERR(ctrl->ctrl.admin_tagset))
+			nvme_rdma_free_tagset(&ctrl->ctrl, ctrl->ctrl.admin_tagset);
 	}
 	if (ctrl->async_event_sqe.data) {
 		nvme_rdma_free_qe(ctrl->device->dev, &ctrl->async_event_sqe,
@@ -912,8 +914,10 @@ static void nvme_rdma_destroy_io_queues(struct nvme_rdma_ctrl *ctrl,
 		bool remove)
 {
 	if (remove) {
-		blk_cleanup_queue(ctrl->ctrl.connect_q);
-		nvme_rdma_free_tagset(&ctrl->ctrl, ctrl->ctrl.tagset);
+		if (ctrl->ctrl.connect_q && !IS_ERR(ctrl->ctrl.connect_q))
+			blk_cleanup_queue(ctrl->ctrl.connect_q);
+		if (ctrl->ctrl.tagset && !IS_ERR(ctrl->ctrl.tagset))
+			nvme_rdma_free_tagset(&ctrl->ctrl, ctrl->ctrl.tagset);
 	}
 	nvme_rdma_free_io_queues(ctrl);
 }
@@ -1808,7 +1812,7 @@ nvme_rdma_timeout(struct request *rq, bool reserved)
 #ifdef	HAVE_BLK_EH_DONE
 	return BLK_EH_DONE;
 #else
-	return BLK_EH_RESET_TIMER;
+	return BLK_EH_HANDLED;
 #endif
 }
 
@@ -2263,6 +2267,9 @@ static struct nvme_ctrl *nvme_rdma_create_ctrl(struct device *dev,
 	changed = nvmf_change_ctrl_state(&ctrl->ctrl, NVME_CTRL_CONNECTING);
 	WARN_ON_ONCE(!changed);
 
+	dev_info(ctrl->ctrl.device, "creating ctrl: NQN \"%s\", addr %pISpcs\n",
+		ctrl->ctrl.opts->subsysnqn, &ctrl->addr);
+
 	ret = nvme_rdma_setup_ctrl(ctrl, true);
 	if (ret)
 		goto out_uninit_ctrl;
@@ -2364,5 +2371,5 @@ static void __exit nvme_rdma_cleanup_module(void)
 
 module_init(nvme_rdma_init_module);
 module_exit(nvme_rdma_cleanup_module);
-
+MODULE_DESCRIPTION("4.19-20191024");
 MODULE_LICENSE("GPL v2");

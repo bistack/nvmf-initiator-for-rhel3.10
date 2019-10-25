@@ -2,7 +2,7 @@ ifneq ($(KERNELRELEASE),)
 obj-y		+= host/
 else
 
-OFA := /noah/mlnx-ofa_kernel-4.3
+OFA := ../../mlnx-ofa_kernel-4.2
 K_VER := `uname -r`
 K_SRC := /lib/modules/$(K_VER)/build
 
