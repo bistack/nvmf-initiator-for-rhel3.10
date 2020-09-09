@@ -1704,6 +1704,14 @@ static bool nvme_ns_ids_valid(struct nvme_ns_ids *ids)
 
 static bool nvme_ns_ids_equal(struct nvme_ns_ids *a, struct nvme_ns_ids *b)
 {
+	printk("ns_ids:\n");
+	printk("uuid.%pU\n", &a->uuid);
+	printk("uuid.%pU\n", &b->uuid);
+	printk("eui.%16phN\n", a->nguid);
+	printk("eui.%16phN\n", b->nguid);
+	printk("eui.%8phN\n", a->eui64);
+	printk("eui.%8phN\n", b->eui64);
+
 	return uuid_equal(&a->uuid, &b->uuid) &&
 		memcmp(&a->nguid, &b->nguid, sizeof(a->nguid)) == 0 &&
 		memcmp(&a->eui64, &b->eui64, sizeof(a->eui64)) == 0;

@@ -39,6 +39,7 @@
 
 #include "nvme.h"
 #include "fabrics.h"
+#include "git.h"
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0))
 #include <linux/refcount.h>
@@ -1798,22 +1799,40 @@ static enum blk_eh_timer_return
 nvme_rdma_timeout(struct request *rq, bool reserved)
 {
 	struct nvme_rdma_request *req = blk_mq_rq_to_pdu(rq);
+	struct nvme_rdma_queue *queue = req->queue;
+	struct nvme_rdma_ctrl *ctrl = queue->ctrl;
 
-	dev_warn(req->queue->ctrl->ctrl.device,
-		 "I/O %d QID %d timeout, reset controller\n",
-		 rq->tag, nvme_rdma_queue_idx(req->queue));
+	dev_warn(ctrl->ctrl.device, "I/O %d QID %d timeout\n",
+		 rq->tag, nvme_rdma_queue_idx(queue));
 
-	/* queue error recovery */
-	nvme_rdma_error_recovery(req->queue->ctrl);
+	/*
+	 * Restart the timer if a controller reset is already scheduled. Any
+	 * timed out commands would be handled before entering the connecting
+	 * state.
+	 */
+	if (ctrl->ctrl.state == NVME_CTRL_RESETTING)
+		return BLK_EH_RESET_TIMER;
 
-	/* fail with DNR on cmd timeout */
-	nvme_req(rq)->status = NVME_SC_ABORT_REQ | NVME_SC_DNR;
-
+	if (ctrl->ctrl.state != NVME_CTRL_LIVE) {
+		/*
+		 * Teardown immediately if controller times out while starting
+		 * or we are already started error recovery. all outstanding
+		 * requests are completed on shutdown, so we return BLK_EH_DONE.
+		 */
+		flush_work(&ctrl->err_work);
+		nvme_rdma_teardown_io_queues(ctrl, false);
+		nvme_rdma_teardown_admin_queue(ctrl, false);
 #ifdef	HAVE_BLK_EH_DONE
-	return BLK_EH_DONE;
+		return BLK_EH_DONE;
 #else
-	return BLK_EH_HANDLED;
+		return BLK_EH_HANDLED;
 #endif
+	}
+
+	dev_warn(ctrl->ctrl.device, "starting error recovery\n");
+	nvme_rdma_error_recovery(ctrl);
+
+	return BLK_EH_RESET_TIMER;
 }
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4,13,0))
@@ -2371,5 +2390,5 @@ static void __exit nvme_rdma_cleanup_module(void)
 
 module_init(nvme_rdma_init_module);
 module_exit(nvme_rdma_cleanup_module);
-MODULE_DESCRIPTION("4.19-20191024");
+MODULE_DESCRIPTION(NVMF_BUILD_VERSION);
 MODULE_LICENSE("GPL v2");

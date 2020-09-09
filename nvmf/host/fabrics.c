@@ -24,6 +24,7 @@
 #include <linux/ctype.h>
 #include "nvme.h"
 #include "fabrics.h"
+#include "git.h"
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4,13,0)) /* uuid_t */
 /*
@@ -596,7 +597,7 @@ int nvmf_register_transport(struct nvmf_transport_ops *ops)
 	down_write(&nvmf_transports_rwsem);
 	list_add_tail(&ops->entry, &nvmf_transports);
 	up_write(&nvmf_transports_rwsem);
-	printk("NVMF: register transport %s\n", ops->name);
+	printk("NVMF: ver %s, register transport %s\n", NVMF_BUILD_VERSION, ops->name);
 
 	return 0;
 }

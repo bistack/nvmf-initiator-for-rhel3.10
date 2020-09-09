@@ -1,10 +1,15 @@
+CC := /opt/compiler/gcc-4.8.2/bin/gcc
+
 ifneq ($(KERNELRELEASE),)
 obj-y		+= host/
 else
 
+KVER := "4.19"  # linux version of nvmf host
+VER := `git log -1 --date=short --pretty="%h_%cd"`
 OFA := ../../mlnx-ofa_kernel-4.2
-K_VER := `uname -r`
-K_SRC := /lib/modules/$(K_VER)/build
+#K_VER := `uname -r`
+#K_SRC := /lib/modules/$(K_VER)/build
+K_SRC := /home/linux-3-10-17
 
 OFA_RDMA_H := $(OFA)/include/rdma
 OFA_UAPI_RDMA_H := $(OFA)/include/uapi/rdma
@@ -18,7 +23,7 @@ COMPAT_H := $(HDIR)/compat
 #	CONFIG_NVME_CORE=m	\
 #	CONFIG_BLK_DEV_NVME=m	\
 
-all:
+all: git
 	make -C $(K_SRC) M=$(PWD) modules \
 	CONFIG_NVME_FABRICS=m	\
 	CONFIG_NVME_RDMA=m	\
@@ -38,7 +43,8 @@ all:
 		-Iinclude/generated/uapi \
 		-include $$(srctree)/include/linux/kconfig.h \
 		'
-	mv ./host/*.ko ./nvmf-mod/
+	@- mkdir ./nvmf-mod-$(VER)
+	@mv -f ./host/*.ko ./nvmf-mod-$(VER)/
 
 headers:
 	- rm -rf $(RDMA_H)/*.h
@@ -69,5 +75,13 @@ config:
 	cd $(OFA) && ./configure --with-nvmf-host-without-fc --without-nvmf_target-mod --kernel-sources=$(K_SRC)
 
 clean:
-	rm -rf ./nvmf_out/* ./host*.ko ./host/*.o ./host/*.mod.c Module.symvers modules.order
+	rm -rf ./host*.ko ./host/*.o ./host/*.mod.c Module.symvers modules.order
+
+git:
+	@echo "git_last_commit $(KVER) $(VER)"
+	@echo "#ifndef NVMF_GIT_H" > ./host/git.h
+	@echo "#define NVMF_GIT_H" >> ./host/git.h
+	@echo "#define NVMF_BUILD_VERSION \"$(KVER) $(VER)\"" >> ./host/git.h
+	@echo "#endif /* NVMF_GIT_H */" >> ./host/git.h
+
 endif
